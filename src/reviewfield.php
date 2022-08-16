@@ -14,6 +14,9 @@ class ReviewFieldInfo {
     /** @var bool
      * @readonly */
     public $has_options;
+        /** @var bool
+     * @readonly */
+    public $predict;
     /** @var ?non-empty-string
      * @readonly */
     public $main_storage;
@@ -36,9 +39,10 @@ class ReviewFieldInfo {
      * @param ?non-empty-string $main_storage
      * @param ?non-empty-string $json_storage
      * @phan-assert non-empty-string $short_id */
-    function __construct($short_id, $has_options, $main_storage, $json_storage) {
+    function __construct($short_id, $has_options, $main_storage, $json_storage, $predict) {
         $this->short_id = $short_id;
         $this->has_options = $has_options;
+        $this->predict = $predict;
         $this->main_storage = $main_storage;
         $this->json_storage = $json_storage;
     }
@@ -97,6 +101,8 @@ abstract class ReviewField implements JsonSerializable {
     public $_search_keyword;
     /** @var bool */
     public $has_options;
+    /** @var bool */
+    public $predict;
     /** @var int */
     public $view_score;
     /** @var ?int */
@@ -153,6 +159,7 @@ abstract class ReviewField implements JsonSerializable {
     function __construct(Conf $conf, ReviewFieldInfo $finfo) {
         $this->short_id = $finfo->short_id;
         $this->has_options = $finfo->has_options;
+        $this->predict = $finfo->predict;
         $this->main_storage = $finfo->main_storage;
         $this->json_storage = $finfo->json_storage;
         $this->conf = $conf;
@@ -163,6 +170,8 @@ abstract class ReviewField implements JsonSerializable {
     static function make(Conf $conf, $rfi) {
         if ($rfi->has_options) {
             return new Score_ReviewField($conf, $rfi);
+        } elseif ($rfi->predict) {
+            return new Predict_ReviewField($conf, $rfi);
         } else {
             return new Text_ReviewField($conf, $rfi);
         }
@@ -170,9 +179,9 @@ abstract class ReviewField implements JsonSerializable {
 
     /** @param bool $has_options
      * @return ReviewField */
-    static function make_template(Conf $conf, $has_options) {
-        $id = $has_options ? "s00" : "t00";
-        return self::make($conf, new ReviewFieldInfo($id, $has_options, null, null));
+    static function make_template(Conf $conf, $has_options, $predict) {
+        $id = $has_options ? "s00" : ($predict ? "p00" : "t00");
+        return self::make($conf, new ReviewFieldInfo($id, $has_options, null, null, $predict));
     }
 
     /** @param object $j */
@@ -835,6 +844,393 @@ class Score_ReviewField extends ReviewField {
         Ht::stash_script("$(hotcrp.scorechart)", "scorechart");
 
         return $retstr;
+    }
+
+    /** @param string $text
+     * @return int|false */
+    function parse_value($text) {
+        $text = trim($text);
+        if ($text === "") {
+            return 0;
+        }
+        if (!ctype_alnum($text)) {
+            if (preg_match('/\A([A-Z]|[0-9]+)(?:[\s\.]|\z)/', $text, $m)) {
+                $text = $m[1];
+            } else if ($text[0] === "(" || strcasecmp($text, "No entry") === 0) {
+                return 0;
+            } else {
+                return false;
+            }
+        }
+        if (($i = array_search($text, $this->symbols)) !== false) {
+            return $i + 1;
+        } else if ($text === "0") {
+            return 0;
+        } else {
+            return false;
+        }
+    }
+
+    /** @param string $text
+     * @return bool */
+    function parse_is_explicit_empty($text) {
+        return $text === "0" || strcasecmp($text, "No entry") === 0;
+    }
+
+    /** @param int|string $fval
+     * @return int|string */
+    function normalize_value($fval) {
+        if (($i = array_search($fval, $this->symbols)) !== false) {
+            return $this->symbols[$i];
+        } else {
+            return 0;
+        }
+    }
+
+    /** @param int $i
+     * @param int|string $fv
+     * @param int|string $reqv */
+    private function print_choice($i, $fv, $reqv) {
+        $symbol = $i < 0 ? "0" : $this->symbols[$i];
+        $opt = ["id" => "{$this->short_id}_{$symbol}"];
+        if ($fv !== $reqv) {
+            $opt["data-default-checked"] = $fv === $symbol;
+        }
+        echo '<label class="checki', ($i >= 0 ? "" : " g"), '"><span class="checkc">',
+            Ht::radio($this->short_id, $symbol, $reqv === $symbol, $opt), '</span>';
+        if ($i >= 0) {
+            $vc = $this->value_class($i + 1);
+            echo '<strong class="rev_num ', $vc, '">', $symbol;
+            if ($this->values[$i] !== "") {
+                echo '.</strong> ', htmlspecialchars($this->values[$i]);
+            } else {
+                echo '</strong>';
+            }
+        } else {
+            echo 'No entry';
+        }
+        echo '</label>';
+    }
+
+    function print_web_edit($fv, $reqv, $args) {
+        $n = count($this->values);
+        if ($reqv || !$this->required) {
+            $for = "{$this->short_id}_{$reqv}";
+        } else {
+            $for = "{$this->short_id}_" . $this->symbols[$this->flip ? $n - 1 : 0];
+        }
+        $this->print_web_edit_open($this->short_id, $for, $args["rvalues"]);
+        echo '<div class="revev">';
+        $step = $this->flip ? -1 : 1;
+        for ($i = $this->flip ? $n - 1 : 0; $i >= 0 && $i < $n; $i += $step) {
+            $this->print_choice($i, $fv, $reqv);
+        }
+        if (!$this->required) {
+            $this->print_choice(-1, $fv, $reqv);
+        }
+        echo '</div></div>';
+    }
+
+    function unparse_text_field(&$t, $fv, $args) {
+        if ($fv !== "" && $fv !== "0") {
+            $this->unparse_text_field_header($t, $args);
+            $i = array_search($fv, $this->symbols);
+            if ($i !== false && $this->values[$i] !== "") {
+                $t[] = prefix_word_wrap("{$fv}. ", $this->values[$i], strlen($fv) + 2, null, $args["flowed"]);
+            } else {
+                $t[] = "{$fv}\n";
+            }
+        }
+    }
+
+    function unparse_offline_field(&$t, $fv, $args) {
+        $this->unparse_offline_field_header($t, $args);
+        $t[] = "==-== Choices:\n";
+        $n = count($this->values);
+        $step = $this->flip ? -1 : 1;
+        for ($i = $this->flip ? $n - 1 : 0; $i >= 0 && $i < $n; $i += $step) {
+            if ($this->values[$i] !== "") {
+                $y = "==-==    {$this->symbols[$i]}. ";
+                /** @phan-suppress-next-line PhanParamSuspiciousOrder */
+                $t[] = prefix_word_wrap($y, $this->values[$i], str_pad("==-==", strlen($y)));
+            } else {
+                $t[] = "==-==   {$this->symbols[$i]}\n";
+            }
+        }
+        if (!$this->required) {
+            $t[] = "==-==    No entry\n==-== Enter your choice:\n";
+        } else if ($this->option_letter) {
+            $t[] = "==-== Enter the letter of your choice:\n";
+        } else {
+            $t[] = "==-== Enter the number of your choice:\n";
+        }
+        $t[] = "\n";
+        if (($i = array_search($fv, $this->symbols)) !== false) {
+            if ($this->values[$i] !== "") {
+                $t[] = "{$this->symbols[$i]}. {$this->values[$i]}\n";
+            } else {
+                $t[] = "{$this->symbols[$i]}\n";
+            }
+        } else if ($this->required) {
+            $t[] = "(Your choice here)\n";
+        } else {
+            $t[] = "No entry\n";
+        }
+    }
+}
+
+class Predict_ReviewField extends ReviewField {
+    /** @var list<string> */
+    private $values = [];
+    /** @var list<int|string> */
+    private $symbols = [];
+    /** @var ?list<int> */
+    private $ids;
+    /** @var int */
+    public $option_letter = 0;
+    /** @var bool */
+    public $flip = false;
+    /** @var string */
+    public $scheme = "sv";
+
+    // colors
+    /** @var array<string,list> */
+    static public $scheme_info = [
+        "sv" => [0, 9, "svr"], "svr" => [1, 9, "sv"],
+        "blpu" => [0, 9, "publ"], "publ" => [1, 9, "blpu"],
+        "rdpk" => [1, 9, "pkrd"], "pkrd" => [0, 9, "rdpk"],
+        "viridisr" => [1, 9, "viridis"], "viridis" => [0, 9, "viridisr"],
+        "orbu" => [0, 9, "buor"], "buor" => [1, 9, "orbu"],
+        "turbo" => [0, 9, "turbor"], "turbor" => [1, 9, "turbo"],
+        "catx" => [2, 10, null], "none" => [2, 1, null]
+    ];
+
+    function __construct(Conf $conf, ReviewFieldInfo $finfo) {
+        assert($finfo->predict);
+        parent::__construct($conf, $finfo);
+        $this->predict = true;
+    }
+
+    /** @param object $j */
+    function assign_json($j) {
+        parent::assign_json($j);
+        $this->values = $j->values ?? $j->options ?? [];
+        $nvalues = count($this->values);
+        $ol = $j->start ?? $j->option_letter ?? null;
+        $this->option_letter = 0;
+        $this->symbols = [];
+        $this->flip = false;
+        if (isset($j->symbols) && count($j->symbols) === $nvalues) {
+            $this->symbols = $j->symbols;
+        } else if ($ol && is_string($ol) && ctype_upper($ol) && strlen($ol) === 1) {
+            $this->option_letter = ord($ol) + $nvalues;
+            $this->flip = true;
+            for ($i = 0; $i !== $nvalues; ++$i) {
+                $this->symbols[] = chr($this->option_letter - $i - 1);
+            }
+        } else {
+            for ($i = 0; $i !== $nvalues; ++$i) {
+                $this->symbols[] = $i + 1;
+            }
+        }
+        if (isset($j->ids) && count($j->ids) === $nvalues) {
+            $this->ids = $j->ids;
+        }
+        if (isset($j->scheme)) {
+            $this->scheme = $j->scheme;
+        } else if (isset($j->option_class_prefix) /* XXX backward compat */) {
+            $p = $j->option_class_prefix;
+            if (str_starts_with($p, "sv-")) {
+                $p = substr($p, 3);
+            }
+            if ($this->option_letter && isset(self::$scheme_info[$p])) {
+                $p = self::$scheme_info[$p][2] ?? $p;
+            }
+            $this->scheme = $p;
+        }
+        if (!isset($j->required)) {
+            if (isset($j->allow_empty) /* XXX backward compat */) {
+                $this->required = !$j->allow_empty;
+            } else {
+                $this->required = true;
+            }
+        }
+        $this->_typical_score = null;
+    }
+
+    /** @return list<string> */
+    function values() {
+        return $this->values;
+    }
+
+    /** @return bool */
+    function checkSum() {
+        $total = 0;
+        foreach($this->values as $value){
+            $total += (int)$value;
+        }
+        return ($total === 100) ? true : false;
+    }
+
+    /** @return list<int|string> */
+    function ordered_symbols() {
+        return $this->flip ? array_reverse($this->symbols) : $this->symbols;
+    }
+
+    /** @return list<string> */
+    function ordered_values() {
+        return $this->flip ? array_reverse($this->values) : $this->values;
+    }
+
+    /** @return list<int> */
+    function ids() {
+        return $this->ids ?? range(1, count($this->values));
+    }
+
+    function unparse_json($style) {
+        $j = parent::unparse_json($style);
+        $j->values = $this->values;
+        if (!empty($this->ids)
+            && ($style !== self::UJ_STORAGE
+                || $this->ids !== range(1, count($this->values)))) {
+            $j->ids = $this->ids;
+        }
+        if ($this->option_letter) {
+            $j->start = chr($this->option_letter - count($this->values));
+        }
+        if ($this->flip) {
+            $j->flip = true;
+        }
+        if ($this->scheme !== "sv") {
+            $j->scheme = $this->scheme;
+        }
+        $j->required = $this->required;
+        return $j;
+    }
+
+    function unparse_setting($rfs) {
+        parent::unparse_setting($rfs);
+        $rfs->type = "radio";
+        $n = count($this->values);
+        $rfs->values = $this->values;
+        $rfs->ids = $this->ids();
+        if ($this->option_letter) {
+            $rfs->start = chr($this->option_letter - $n);
+        } else {
+            $rfs->start = 1;
+        }
+        $rfs->flip = $this->flip;
+        $rfs->scheme = $this->scheme;
+
+        $rfs->xvalues = [];
+        foreach ($this->ordered_symbols() as $i => $symbol) {
+            $rfs->xvalues[] = $rfv = new RfValue_Setting;
+            $idx = $this->flip ? $n - $i - 1 : $i;
+            $rfv->id = $rfs->ids[$idx];
+            $rfv->order = $i + 1;
+            $rfv->symbol = $symbol;
+            $rfv->name = $this->values[$idx];
+            $rfv->old_value = $idx + 1;
+        }
+    }
+
+    /** @return int */
+    function nvalues() {
+        return count($this->values);
+    }
+
+    /** @param ?int|string $value
+     * @return bool */
+    function value_empty($value) {
+        // see also ReviewInfo::has_nonempty_field
+        return $value === null
+            || $value === ""
+            || (int) $value === 0;
+    }
+
+    /** @return ?array{string,string} */
+    function full_score_range() {
+        $f = $this->flip ? count($this->values) : 1;
+        $l = $this->flip ? 1 : count($this->values);
+        return [$this->unparse_value($f), $this->unparse_value($l)];
+    }
+
+    /** @param int $option_letter
+     * @param int|float $value
+     * @return string */
+    static function unparse_letter($option_letter, $value) {
+        $ivalue = (int) $value;
+        $ch = $option_letter - $ivalue;
+        if ($value < $ivalue + 0.25) {
+            return chr($ch);
+        } else if ($value < $ivalue + 0.75) {
+            return chr($ch - 1) . chr($ch);
+        } else {
+            return chr($ch - 1);
+        }
+    }
+
+    /** @param int|float $value
+     * @return string */
+    function value_class($value) {
+        $info = self::$scheme_info[$this->scheme];
+        if (count($this->values) <= 1) {
+            $n = $info[1] - 1;
+        } else if ($info[0] & 2) {
+            $n = (int) round($value - 1) % $info[1];
+        } else {
+            $n = (int) round(($value - 1) * ($info[1] - 1) / (count($this->values) - 1));
+        }
+        $sclass = $info[0] & 1 ? $info[2] : $this->scheme;
+        if ((($info[0] & 1) !== 0) !== $this->flip) {
+            $n = $info[1] - $n;
+        } else {
+            $n += 1;
+        }
+        if ($sclass === "sv") {
+            return "sv sv{$n}";
+        } else {
+            return "sv sv-{$sclass}{$n}";
+        }
+    }
+
+    /** @param int|float|string $value
+     * @param int $flags
+     * @param ?string $real_format
+     * @return ?string */
+    function unparse_value($value, $flags = 0, $real_format = null) {
+        if (!$value) {
+            return null;
+        }
+        if (!$this->option_letter || is_numeric($value)) {
+            $value = (float) $value;
+        } else if (strlen($value) === 1) {
+            $value = (float) $this->option_letter - ord($value);
+        } else if (ord($value[0]) + 1 === ord($value[1])) {
+            $value = ($this->option_letter - ord($value[0])) - 0.5;
+        }
+        if (!is_float($value) || $value <= 0.8) {
+            return null;
+        }
+        if ($this->option_letter) {
+            $text = self::unparse_letter($this->option_letter, $value);
+        } else if ($real_format) {
+            $text = sprintf($real_format, $value);
+        } else if (($flags & self::VALUE_NATIVE) === 0) {
+            $text = (string) $value;
+        } else {
+            $text = $value;
+        }
+        if (($flags & self::VALUE_SC) !== 0) {
+            $vc = $this->value_class($value);
+            $text = "<span class=\"{$vc}\">{$text}</span>";
+        }
+        return $text;
+    }
+
+    /** @param int|float $value */
+    function unparse_average($value) {
+        return (string) $this->unparse_value($value, 0, "%.2f");
     }
 
     /** @param string $text
