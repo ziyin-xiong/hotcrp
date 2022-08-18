@@ -21,11 +21,22 @@ class Rf_Setting {
 
     // internal
     public $presence;
-    /** @var list<RfValue_Setting> */
+    /** @var list<RfValue_Setting> 
+     *  @var list<RfPredict_Setting> */
     public $xvalues;
 }
 
 class RfValue_Setting {
+    public $id;
+    public $name;
+    public $order;
+    public $symbol;
+
+    // internal
+    public $old_value;
+}
+
+class RfPredict_Setting {
     public $id;
     public $name;
     public $order;

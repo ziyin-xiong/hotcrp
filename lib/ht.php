@@ -283,6 +283,15 @@ class Ht {
         return '<input type="radio"' . substr($t, 22);
     }
 
+    /** @param string $name
+     * @param string|int $value
+     * @param bool $checked
+     * @param ?array<string,mixed> $js
+     * @return string */
+    static function slider($name, $value = 1, $checked = false, $js = null) {
+        return;
+    }
+
     /** @param string $html
      * @param ?string $id
      * @param ?array<string,mixed> $js

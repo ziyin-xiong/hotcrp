@@ -1014,7 +1014,7 @@ class Predict_ReviewField extends ReviewField {
     /** @param object $j */
     function assign_json($j) {
         parent::assign_json($j);
-        $this->values = $j->values ?? $j->options ?? [];
+        $this->values = $j->values ?? [];  // $this->values = $j->values ?? $j->options ?? [];
         $nvalues = count($this->values);
         $ol = $j->start ?? $j->option_letter ?? null;
         $this->option_letter = 0;
@@ -1055,7 +1055,6 @@ class Predict_ReviewField extends ReviewField {
                 $this->required = true;
             }
         }
-        $this->_typical_score = null;
     }
 
     /** @return list<string> */
@@ -1110,7 +1109,7 @@ class Predict_ReviewField extends ReviewField {
 
     function unparse_setting($rfs) {
         parent::unparse_setting($rfs);
-        $rfs->type = "radio";
+        $rfs->type = "range";
         $n = count($this->values);
         $rfs->values = $this->values;
         $rfs->ids = $this->ids();
@@ -1124,7 +1123,7 @@ class Predict_ReviewField extends ReviewField {
 
         $rfs->xvalues = [];
         foreach ($this->ordered_symbols() as $i => $symbol) {
-            $rfs->xvalues[] = $rfv = new RfValue_Setting;
+            $rfs->xvalues[] = $rfv = new RfPredict_Setting;  // TODO: 需要完善使用到review form predict的所有代码文件
             $idx = $this->flip ? $n - $i - 1 : $i;
             $rfv->id = $rfs->ids[$idx];
             $rfv->order = $i + 1;
@@ -1150,8 +1149,8 @@ class Predict_ReviewField extends ReviewField {
 
     /** @return ?array{string,string} */
     function full_score_range() {
-        $f = $this->flip ? count($this->values) : 1;
-        $l = $this->flip ? 1 : count($this->values);
+        $f = $this->flip ? count($this->values) : 1;  // start index
+        $l = $this->flip ? 1 : count($this->values);  // end index
         return [$this->unparse_value($f), $this->unparse_value($l)];
     }
 
@@ -1172,6 +1171,7 @@ class Predict_ReviewField extends ReviewField {
 
     /** @param int|float $value
      * @return string */
+    // TODO: Slider问题可能需要重新设计区间划分和显示样式
     function value_class($value) {
         $info = self::$scheme_info[$this->scheme];
         if (count($this->values) <= 1) {
@@ -1204,7 +1204,7 @@ class Predict_ReviewField extends ReviewField {
         }
         if (!$this->option_letter || is_numeric($value)) {
             $value = (float) $value;
-        } else if (strlen($value) === 1) {
+        } else if (strlen($value) === 1) {  // value is string
             $value = (float) $this->option_letter - ord($value);
         } else if (ord($value[0]) + 1 === ord($value[1])) {
             $value = ($this->option_letter - ord($value[0])) - 0.5;
@@ -1214,23 +1214,25 @@ class Predict_ReviewField extends ReviewField {
         }
         if ($this->option_letter) {
             $text = self::unparse_letter($this->option_letter, $value);
-        } else if ($real_format) {
+        } else if ($real_format) {  // 限制小数位
             $text = sprintf($real_format, $value);
         } else if (($flags & self::VALUE_NATIVE) === 0) {
             $text = (string) $value;
         } else {
             $text = $value;
         }
-        if (($flags & self::VALUE_SC) !== 0) {
-            $vc = $this->value_class($value);
-            $text = "<span class=\"{$vc}\">{$text}</span>";
-        }
+        /** 
+         *         if (($flags & self::VALUE_SC) !== 0) {
+         *   $vc = $this->value_class($value);
+         *   $text = "<span class=\"{$vc}\">{$text}</span>";  // TODO:predict是否需要根据区间划分显示样式？暂未设计
+         *}
+        */
         return $text;
     }
 
     /** @param int|float $value */
     function unparse_average($value) {
-        return (string) $this->unparse_value($value, 0, "%.2f");
+        return (string) $this->unparse_value($value, 0, "%.2f");  // 输出保留两位小数的正确字符串
     }
 
     /** @param string $text
@@ -1264,39 +1266,17 @@ class Predict_ReviewField extends ReviewField {
         return $text === "0" || strcasecmp($text, "No entry") === 0;
     }
 
-    /** @param int|string $fval
-     * @return int|string */
-    function normalize_value($fval) {
-        if (($i = array_search($fval, $this->symbols)) !== false) {
-            return $this->symbols[$i];
-        } else {
-            return 0;
-        }
-    }
-
     /** @param int $i
      * @param int|string $fv
      * @param int|string $reqv */
-    private function print_choice($i, $fv, $reqv) {
+    private function print_item($i, $fv, $reqv) {
         $symbol = $i < 0 ? "0" : $this->symbols[$i];
         $opt = ["id" => "{$this->short_id}_{$symbol}"];
         if ($fv !== $reqv) {
             $opt["data-default-checked"] = $fv === $symbol;
         }
-        echo '<label class="checki', ($i >= 0 ? "" : " g"), '"><span class="checkc">',
-            Ht::radio($this->short_id, $symbol, $reqv === $symbol, $opt), '</span>';
-        if ($i >= 0) {
-            $vc = $this->value_class($i + 1);
-            echo '<strong class="rev_num ', $vc, '">', $symbol;
-            if ($this->values[$i] !== "") {
-                echo '.</strong> ', htmlspecialchars($this->values[$i]);
-            } else {
-                echo '</strong>';
-            }
-        } else {
-            echo 'No entry';
-        }
-        echo '</label>';
+        // TODO: print选项内容label 比如：reject/accept
+        include("slider.html");  // print滑动条
     }
 
     function print_web_edit($fv, $reqv, $args) {
