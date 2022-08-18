@@ -1277,6 +1277,8 @@ class Predict_ReviewField extends ReviewField {
         }
         // TODO: print选项内容label 比如：reject/accept
         include("slider.html");  // print滑动条
+        header("Content-type: text/html; charset=utf-8");
+        $this->values[$i] = $_GET['data'];  // 获取数据
     }
 
     function print_web_edit($fv, $reqv, $args) {
