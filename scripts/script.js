@@ -993,9 +993,8 @@ function make_onkey(key, f) {
     return function (evt) {
         if (!event_modkey(evt) && event_key(evt) === key) {
             evt.preventDefault();
-            evt.stopImmediatePropagation();
+            handle_ui.stopImmediatePropagation(evt);
             f.call(this, evt);
-            return false;
         }
     };
 }
@@ -1462,7 +1461,7 @@ function append_feedback_near(elt, mi) {
 
 // ui
 var handle_ui = (function ($) {
-var callbacks = {};
+var callbacks = {}, handling = {}, stopped = 0, nest = 0;
 function collect_callbacks(cbs, c, evt_type) {
     var j, k;
     for (j = 0; j !== c.length; j += 3) {
@@ -1474,12 +1473,31 @@ function collect_callbacks(cbs, c, evt_type) {
     }
 }
 function call_callbacks(cbs, element, evt) {
-    for (var i = 0; i !== cbs.length; i += 2) {
-        if (cbs[i].call(element, evt) === false)
-            break;
+    var nhandling, nstopped, oevt = evt.originalEvent || evt;
+    try {
+        if (++nest !== 1) {
+            nhandling = handling;
+            nstopped = stopped;
+        }
+        if (evt !== handling) {
+            handling = evt;
+            stopped = 0;
+        }
+        for (var i = 0; i !== cbs.length && stopped !== 2; i += 2) {
+            if (cbs[i].call(element, oevt) === false)
+                break;
+        }
+    } finally {
+        if (--nest !== 0) {
+            handling = nhandling;
+            stopped = nstopped;
+        }
     }
 }
 function handle_ui(evt) {
+    if (evt === handling && stopped !== 0) {
+        return;
+    }
     var e = evt.target;
     if ((e && (hasClass(e, "ui") || hasClass(e, "uin")))
         || (this.tagName === "A" && hasClass(this, "ui"))) {
@@ -1490,7 +1508,7 @@ function handle_ui(evt) {
         var c = callbacks[k[i]];
         c && collect_callbacks(cbs, c, evt.type);
     }
-    cbs.length !== 0 && call_callbacks(cbs, this, evt.originalEvent || evt);
+    cbs.length !== 0 && call_callbacks(cbs, this, evt);
 }
 handle_ui.on = function (s, callback, priority) {
     var pos = 0, sp, dot = 0, len = s.length,
@@ -1523,8 +1541,6 @@ handle_ui.on = function (s, callback, priority) {
 handle_ui.trigger = function (className, evt) {
     var c = callbacks[className];
     if (c) {
-        if (typeof evt === "string")
-            evt = $.Event(evt); // XXX IE8: `new Event` is not supported
         var cbs = [];
         collect_callbacks(cbs, c, evt.type);
         cbs.length !== 0 && call_callbacks(cbs, this, evt);
@@ -1537,6 +1553,22 @@ handle_ui.handlers = function (className, evt_type) {
         result.push(cbs[i])
     }
     return result;
+};
+handle_ui.stopPropagation = function (evt) {
+    if (evt === handling || evt === handling.originalEvent) {
+        handling.stopPropagation();
+        stopped = stopped || 1;
+    } else {
+        evt.stopPropagation();
+    }
+};
+handle_ui.stopImmediatePropagation = function (evt, immediate) {
+    if (evt === handling || evt === handling.originalEvent) {
+        handling.stopImmediatePropagation();
+        stopped = 2;
+    } else {
+        evt.stopImmediatePropagation();
+    }
 };
 return handle_ui;
 })($);
@@ -1856,7 +1888,7 @@ handle_ui.on("js-range-click", function (evt) {
 
 $(function () {
     $(".is-range-group").each(function () {
-        handle_ui.trigger.call(this, "js-range-click", "updaterange");
+        handle_ui.trigger.call(this, "js-range-click", new Event("updaterange"));
     });
 });
 
@@ -3556,7 +3588,7 @@ function foldup(evt, opts) {
         && typeof evt === "object"
         && evt.type === "click"
         && !hasClass(evt.target, "uic")) {
-        evt.stopPropagation();
+        handle_ui.stopPropagation(evt);
         evt.preventDefault(); // needed for expanders despite handle_ui!
     }
 }
@@ -3776,7 +3808,7 @@ $(document).on("keypress", "input.js-autosubmit", function (evt) {
         evt.target.blur();
         dest.click();
     }
-    evt.stopPropagation();
+    handle_ui.stopPropagation(evt);
     evt.preventDefault();
 });
 
@@ -3996,7 +4028,7 @@ handle_ui.on("js-assignment-fold", function (evt) {
         form_highlight($a.closest("form")[0]);
         $a.addClass("foldc").removeClass("foldo");
     }
-    evt.stopPropagation();
+    handle_ui.stopPropagation(evt);
 });
 handle_ui.on("js-assignment-autosave", function () {
     var f = this.form;
@@ -4140,7 +4172,7 @@ handle_ui.on("js-request-review-preview-email", function (evt) {
             }
         }
     });
-    evt.stopPropagation();
+    handle_ui.stopPropagation(evt);
 });
 
 // mail
@@ -4239,7 +4271,7 @@ handle_ui.on("badpairs", function () {
     }
 });
 
-handle_ui.on(".js-badpairs-row", function () {
+handle_ui.on(".js-badpairs-row", function (evt) {
     var tbody = $("#bptable > tbody"), n = tbody.children().length;
     if (hasClass(this, "more")) {
         ++n;
@@ -4250,7 +4282,8 @@ handle_ui.on(".js-badpairs-row", function () {
         --n;
         tbody.children().last().remove();
     }
-    return false;
+    evt.preventDefault();
+    handle_ui.stopPropagation(evt);
 });
 
 })();
@@ -4601,7 +4634,7 @@ handle_ui.on("js-review-tokens", function () {
     hc.push_actions(['<button type="submit" name="save" class="btn-primary">Save tokens</button>',
         '<button type="button" name="cancel">Cancel</button>']);
     $d = hc.show();
-    $d.on("submit", "form", function () {
+    $d.on("submit", "form", function (evt) {
         $d.find(".msg").remove();
         $.post(hoturl("=api/reviewtoken"), $d.find("form").serialize(),
             function (data) {
@@ -4612,7 +4645,7 @@ handle_ui.on("js-review-tokens", function () {
                     $d.show_errors(data);
                 }
             });
-        return false;
+        evt.preventDefault();
     });
 });
 
@@ -5753,8 +5786,10 @@ function add_comment_sidebar(celt, cj) {
     navsidebar.set(celt, comment_content_function);
 }
 
-function edit_this() {
-    return edit(find_cj(this));
+function edit_this(evt) {
+    edit(find_cj(this));
+    evt.preventDefault();
+    handle_ui.stopPropagation(evt);
 }
 
 function edit(cj) {
@@ -5764,7 +5799,7 @@ function edit(cj) {
         elt = $$(cid);
     }
     if (!elt && /\beditcomment\b/.test(window.location.search)) {
-        return false;
+        return;
     }
     if (!$(elt).find("form").length) {
         render_comment(cj, true);
@@ -5775,7 +5810,6 @@ function edit(cj) {
     $(function () { te.focus(); });
     has_unload || $(window).on("beforeunload.papercomment", beforeunload);
     has_unload = true;
-    return false;
 }
 
 return {
@@ -5799,7 +5833,7 @@ handle_ui.on("js-overlong-expand", function () {
 
 // previewing
 (function ($) {
-function switch_preview() {
+function switch_preview(evt) {
     var $j = $(this).parent(), $ta;
     while ($j.length && ($ta = $j.find("textarea")).length == 0)
         $j = $j.parent();
@@ -5818,7 +5852,8 @@ function switch_preview() {
             this.innerHTML = "Preview";
         }
     }
-    return false;
+    evt.preventDefault();
+    handle_ui.stopPropagation(evt);
 }
 $(document).on("hotcrprenderpreview", function (evt, format, value, dest) {
     render_text.onto(dest, format, value);
@@ -5828,33 +5863,35 @@ handle_ui.on("js-togglepreview", switch_preview);
 
 
 // quicklink shortcuts
-function quicklink_shortcut(evt, key) {
+function quicklink_shortcut(evt) {
     // find the quicklink, reject if not found
-    var a = $$("quicklink-" + (key === "j" ? "prev" : "next"));
+    var key = event_key(evt),
+        a = $$("quicklink-" + (key === "j" ? "prev" : "next"));
     if (a && a.focus) {
         // focus (for visual feedback), call callback
         a.focus();
         $ajax.after_outstanding(make_link_callback(a));
-        return true;
+        evt.preventDefault();
     } else if ($$("quicklink-list")) {
         // at end of list
-        a = evt.target || evt.srcElement;
+        a = evt.target;
         a = (a && a.tagName == "INPUT" ? a : $$("quicklink-list"));
         removeClass(a, "flash-error-outline");
         void a.offsetWidth;
         addClass(a, "flash-error-outline");
-        return true;
-    } else
-        return false;
+        evt.preventDefault();
+    }
 }
 
-function comment_shortcut() {
+function comment_shortcut(evt) {
     papercomment.edit_id("cnew");
-    return !!$$("cnew");
+    if ($$("cnew"))
+        evt.preventDefault();
 }
 
-function nextprev_shortcut(evt, key) {
+function nextprev_shortcut(evt) {
     var hash = (location.hash || "#").replace(/^#/, ""), ctr, walk,
+        key = event_key(evt),
         siblingdir = key === "n" ? "nextElementSibling" : "previousElementSibling",
         jqdir = key === "n" ? "first" : "last";
     if (hash
@@ -5867,7 +5904,6 @@ function nextprev_shortcut(evt, key) {
     }
     if (walk && walk.hasAttribute("id"))
         location.hash = "#" + walk.getAttribute("id");
-    return true;
 }
 
 function make_selector_shortcut(type) {
@@ -5884,7 +5920,6 @@ function make_selector_shortcut(type) {
         e.removeEventListener("change", end, false);
         if (evt && evt.type == "change")
             this.blur();
-        return false;
     }
     return function (evt) {
         var e = $$("fold" + type);
@@ -5897,64 +5932,64 @@ function make_selector_shortcut(type) {
                 e.addEventListener("blur", end, false);
                 e.addEventListener("change", end, false);
             }
-            evt.stopPropagation();
-            return true;
+            evt.preventDefault();
+            handle_ui.stopPropagation(evt);
         }
-        return false;
     }
 }
 
 function shortcut(top_elt) {
-    var self, main_keys = {}, current_keys = null, last_key_at = null;
+    var self, main_keys = {}, current_keys = null, last_key_at = now_msec() - 1000;
 
     function keypress(evt) {
-        var key, target, x;
-        // IE compatibility
-        evt = evt || window.event;
-        key = event_key(evt);
-        target = evt.target || evt.srcElement;
-        // reject modified keys, interesting targets
-        if (!key || evt.altKey || evt.ctrlKey || evt.metaKey
-            || (target && (x = target.tagName) && target != top_elt
-                && (x === "TEXTAREA"
-                    || x === "SELECT"
-                    || (x === "INPUT"
-                        && target.type !== "button"
-                        && target.type !== "checkbox"
-                        && target.type !== "radio"
-                        && target.type !== "reset"
-                        && target.type !== "submit"))))
-            return true;
-        // call function
-        var keymap, time = now_msec();
-        if (current_keys && last_key_at && time - last_key_at <= 600)
-            keymap = current_keys;
-        else
-            keymap = current_keys = main_keys;
-        var keyfunc = keymap[key] || function () { return false; };
-        if (jQuery.isFunction(keyfunc)) {
-            current_keys = null;
-            if (!keyfunc(evt, key))
-                return true;
-        } else {
-            current_keys = keyfunc;
-            last_key_at = time;
-        }
-        // done
-        if (evt.preventDefault)
-            evt.preventDefault();
-        else
-            evt.returnValue = false;
-        return false;
-    }
+        var delta = evt.timeStamp - last_key_at;
+        last_key_at = evt.timeStamp;
 
+        var e = evt.target;
+        if (e && e !== top_elt) {
+            // reject targets that want the keypress
+            var tag = e.tagName, type = e.type;
+            if (tag === "TEXTAREA"
+                || tag === "SELECT"
+                || (tag === "INPUT"
+                    && type !== "button"
+                    && type !== "checkbox"
+                    && type !== "radio"
+                    && type !== "reset"
+                    && type !== "submit"))
+                return;
+        }
+
+        var key = event_key(evt);
+        // reject modified keys
+        if (!key || evt.altKey || evt.ctrlKey || evt.metaKey)
+            return;
+
+        var action;
+        if (delta >= 0 && delta <= 600 && current_keys)
+            action = current_keys[key];
+        else {
+            current_keys = null;
+            action = main_keys[key];
+        }
+
+        if (action) {
+            if (action.__submap__) {
+                current_keys = action;
+                evt.preventDefault();
+            } else {
+                current_keys = null;
+                action.call(top_elt, evt);
+            }
+        }
+    }
 
     function add(key, f) {
         if (key) {
             if (typeof key === "string")
                 key = [key];
             for (var i = 0, keymap = main_keys; i < key.length - 1; ++i) {
-                keymap[key[i]] = keymap[key[i]] || {};
+                keymap[key[i]] = keymap[key[i]] || {__submap__: true};
                 if (jQuery.isFunction(keymap[key[i]]))
                     log_jserror("bad shortcut " + key.join(","));
                 keymap = keymap[key[i]];
@@ -5963,7 +5998,7 @@ function shortcut(top_elt) {
         } else {
             add("j", quicklink_shortcut);
             add("k", quicklink_shortcut);
-            if (top_elt == document) {
+            if (top_elt === document) {
                 add("c", comment_shortcut);
                 add(["s", "d"], make_selector_shortcut("decision"));
                 add(["s", "l"], make_selector_shortcut("lead"));
@@ -5983,10 +6018,7 @@ function shortcut(top_elt) {
     else if (typeof top_elt === "string")
         top_elt = $$(top_elt);
     if (top_elt && !top_elt.hotcrp_shortcut) {
-        if (top_elt.addEventListener)
-            top_elt.addEventListener("keypress", keypress, false);
-        else
-            top_elt.onkeypress = keypress;
+        top_elt.addEventListener("keypress", keypress, false);
         top_elt.hotcrp_shortcut = true;
     }
     return self;
@@ -6564,7 +6596,7 @@ function suggest() {
             if (hintinfo) {
                 hiding = this.value.substring(hintinfo.pcpos, hintinfo.pcpos + hintinfo.lengths[0]);
                 kill();
-                evt.stopImmediatePropagation();
+                handle_ui.stopImmediatePropagation(evt);
                 result = false;
             }
         } else if ((k === "Tab" || k === "Enter") && !m && hintdiv) {
@@ -6574,7 +6606,7 @@ function suggest() {
             kill();
             if ($active.length || this.selectionEnd !== this.value.length) {
                 evt.preventDefault();
-                evt.stopImmediatePropagation();
+                handle_ui.stopImmediatePropagation(evt);
                 result = false;
             }
         } else if (k.substring(0, 5) === "Arrow" && !m && hintdiv && move_active(k)) {
@@ -6602,7 +6634,7 @@ function suggest() {
     function click(evt) {
         do_complete(this);
         kill();
-        evt.stopPropagation();
+        handle_ui.stopPropagation(evt);
     }
 
     function hover(evt) {
@@ -7131,8 +7163,7 @@ var add_revpref_ajax = (function () {
             if (!event_modkey(evt) && event_key(evt) === "Enter") {
                 rp_change.call(this);
                 evt.preventDefault();
-                evt.stopImmediatePropagation();
-                return false;
+                handle_ui.stopImmediatePropagation(evt);
             }
         } else if (evt.type === "change")
             rp_change.call(this, evt);
@@ -7592,7 +7623,7 @@ function taganno_success(rv) {
 
 handle_ui.on("js-annotate-order", function () {
     var $d, annos, last_newannoid = 0, mytag = this.getAttribute("data-anno-tag");
-    function clickh() {
+    function clickh(evt) {
         if (this.name === "add") {
             var hc = new HtmlCollector;
             add_anno(hc, {});
@@ -7618,7 +7649,8 @@ handle_ui.on("js-annotate-order", function () {
             $.post(hoturl("=api/taganno", {tag: mytag}),
                    {anno: JSON.stringify(anno)}, make_onsave($d));
         }
-        return false;
+        evt.preventDefault();
+        handle_ui.stopPropagation(evt);
     }
     function ondeleteclick() {
         var $div = $(this).closest(".form-g"), annoid = $div.attr("data-anno-id");
@@ -7627,7 +7659,8 @@ handle_ui.on("js-annotate-order", function () {
         $div.find("input[name='legend_" + annoid + "']").prop("disabled", true);
         tooltip.erase.call(this);
         $(this).remove();
-        return false;
+        evt.preventDefault();
+        handle_ui.stopPropagation(evt);
     }
     function make_onsave($d) {
         return function (rv) {
@@ -7792,7 +7825,6 @@ function endgroup_index(i) {
 }
 
 function tag_mousemove(evt) {
-    evt = evt || window.event;
     if (evt.clientX == null)
         evt = mousepos;
     mousepos = {clientX: evt.clientX, clientY: evt.clientY};
@@ -7844,7 +7876,7 @@ function tag_mousemove(evt) {
     if (l !== dragindex) {
         tag_dragto(l);
         if (evt.type === "mousemove")
-            evt.stopPropagation();
+            handle_ui.stopPropagation(evt);
     }
 }
 
@@ -8033,39 +8065,24 @@ function commit_drag(si, di) {
 }
 
 function tag_mousedown(evt) {
-    evt = evt || window.event;
     if (dragging)
         tag_mouseup();
     dragging = this;
     dragindex = null;
     srcindex = analyze_rows(this);
-    if (document.addEventListener) {
-        document.addEventListener("mousemove", tag_mousemove, true);
-        document.addEventListener("mouseup", tag_mouseup, true);
-        document.addEventListener("scroll", tag_mousemove, true);
-    } else {
-        dragging.setCapture();
-        dragging.attachEvent("onmousemove", tag_mousemove);
-        dragging.attachEvent("onmouseup", tag_mouseup);
-        dragging.attachEvent("onmousecapture", tag_mouseup);
-    }
+    document.addEventListener("mousemove", tag_mousemove, true);
+    document.addEventListener("mouseup", tag_mouseup, true);
+    document.addEventListener("scroll", tag_mousemove, true);
     addClass(document.body, "grabbing");
     tag_mousemove(evt);
-    evt.stopPropagation();
     evt.preventDefault();
+    handle_ui.stopPropagation(evt);
 }
 
 function tag_mouseup() {
-    if (document.removeEventListener) {
-        document.removeEventListener("mousemove", tag_mousemove, true);
-        document.removeEventListener("mouseup", tag_mouseup, true);
-        document.removeEventListener("scroll", tag_mousemove, true);
-    } else {
-        dragging.detachEvent("onmousemove", tag_mousemove);
-        dragging.detachEvent("onmouseup", tag_mouseup);
-        dragging.detachEvent("onmousecapture", tag_mouseup);
-        dragging.releaseCapture();
-    }
+    document.removeEventListener("mousemove", tag_mousemove, true);
+    document.removeEventListener("mouseup", tag_mouseup, true);
+    document.removeEventListener("scroll", tag_mousemove, true);
     removeClass(document.body, "grabbing");
     if (dragger) {
         dragger = dragger.remove();
@@ -8115,7 +8132,6 @@ handle_ui.on("js-expand-archive", function (evt) {
             }
         });
     }
-    return false;
 });
 
 
@@ -9419,7 +9435,10 @@ function prepare_paper_select() {
         keyed = 0;
     function cancel(close) {
         $(ctl).val(input_default_value(ctl));
-        close && foldup.call(self, null, {f: true});
+        if (close) {
+            foldup.call(self, null, {f: true});
+            ctl.blur();
+        }
     }
     function make_callback(close) {
         return function (data) {
@@ -9496,8 +9515,7 @@ function prepare_pstags() {
             if (mod === 0 || (key === "Enter" && mod === event_modkey.META)) {
                 $f[0][key === "Enter" ? "save" : "cancel"].click();
                 evt.preventDefault();
-                evt.stopImmediatePropagation();
-                return false;
+                handle_ui.stopImmediatePropagation(evt);
             }
         }
     });
@@ -9506,6 +9524,7 @@ function prepare_pstags() {
         $ta.removeClass("has-error");
         $f.find(".is-error").remove();
         $f.find(".btn-highlight").removeClass("btn-highlight");
+        $ta[0].blur();
         foldup.call($ta[0], evt, {f: true});
     });
     $f.on("submit", save_pstags);
