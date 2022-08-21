@@ -40,7 +40,7 @@ input[type="range"]:active::-webkit-slider-thumb {
     box-shadow: 0 0 0 6px rgba(155, 73, 146, 0.4);
 }
 
-.selected {
+input[type="number"] {
     margin-right: 16px;
     background-color: #f53b57;
     width: 80px;
@@ -51,7 +51,7 @@ input[type="range"]:active::-webkit-slider-thumb {
     position: relative;
 }
 
-.selected::after {
+input[type="number"]::after {
     content: "";
     display: block;
     border-top: 8px solid transparent;
