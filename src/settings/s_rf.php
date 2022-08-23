@@ -24,6 +24,8 @@ class Rf_Setting {
     /** @var list<RfValue_Setting> 
      *  @var list<RfPredict_Setting> */
     public $xvalues;
+    /** @var bool */
+    public $deleted = false;
 }
 
 class RfValue_Setting {
@@ -34,6 +36,8 @@ class RfValue_Setting {
 
     // internal
     public $old_value;
+    /** @var bool */
+    public $deleted = false;
 }
 
 class RfPredict_Setting {

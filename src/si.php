@@ -81,7 +81,7 @@ class Si {
     public $parser_class;
     /** @var bool
      * @readonly */
-    public $disabled = false;
+    public $configurable = true;
     /** @var mixed
      * @readonly */
     private $default_value;
@@ -91,9 +91,6 @@ class Si {
     /** @var ?bool
      * @readonly */
     public $autogrow;
-    /** @var ?string
-     * @readonly */
-    public $ifnonempty;
     /** @var ?bool
      * @readonly */
     public $json_export;
@@ -112,8 +109,6 @@ class Si {
     static private $key_storage = [
         "autogrow" => "is_bool",
         "description" => "is_string",
-        "disabled" => "is_bool",
-        "ifnonempty" => "is_string",
         "internal" => "is_bool",
         "json_values" => "Si::is_auto_or_list",
         "json_export" => "is_bool",
@@ -166,6 +161,13 @@ class Si {
             if (isset(self::$key_storage[$k])) {
                 $this->store($k, $j, $k, self::$key_storage[$k]);
             }
+        }
+        if (isset($j->configurable) && is_bool($j->configurable)) {
+            $this->configurable = $j->configurable;
+        } else if (isset($j->disabled) && is_bool($j->disabled)) {
+            $this->configurable = !$j->disabled;
+        } else if (isset($j->configurable) || isset($j->disabled)) {
+            trigger_error("setting {$j->name}.configurable format error");
         }
         if ($this->placeholder === "") {
             $this->placeholder = null;
@@ -561,9 +563,12 @@ class Si {
             && $this->parser_class
             && ($v = $sv->si_parser($this)->default_value($this, $sv)) !== null) {
             return $v;
-        } else if ($this->storage_type === self::SI_DATA
-                   && str_starts_with($this->storage ?? "", "msg.")) {
-            return $sv->conf->fmt()->default_itext(substr($this->storage_name(), 4));
+        } else if (($this->storage_type & self::SI_DATA) !== 0) {
+            if (str_starts_with($this->storage ?? "", "msg.")) {
+                return $sv->conf->fmt()->default_itext(substr($this->storage_name(), 4));
+            } else {
+                return $this->default_value ?? "";
+            }
         } else {
             return $this->default_value;
         }
