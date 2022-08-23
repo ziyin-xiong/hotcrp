@@ -12,26 +12,22 @@ class ReviewForm_SettingParser extends SettingParser {
 
     function set_oldv(Si $si, SettingValues $sv) {
         if ($si->name_matches("rf/", "*")) {
+            $finfo = null;
             if ($si->name1 !== "\$"
                 && ($fid = $sv->vstr("{$si->name}/id") ?? "") !== ""
                 && $fid !== "new") {
                 $finfo = ReviewFieldInfo::find($sv->conf, $fid);
-                $isnew = false;
-            } else if ($si->name1 === "\$") {
-                $finfo = ReviewFieldInfo::find($sv->conf, "s99");
-                $isnew = true;
-            } else {
+            }
+            $isnew = $finfo === null;
+            if ($finfo === null) {
                 $type = $sv->reqstr("{$si->name}/type") ?? "radio";
                 $finfo = ReviewFieldInfo::find($sv->conf, $type === "text" ? "t99" : "s99");
-                $isnew = true;
             }
-            if ($finfo) {
-                $rfs = new Rf_Setting;
-                ReviewField::make($sv->conf, $finfo)->unparse_setting($rfs);
-                $rfs->id = $isnew ? "new" : $rfs->id;
-                $rfs->required = false;
-                $sv->set_oldv($si->name, $rfs);
-            }
+            $rfs = new Rf_Setting;
+            ReviewField::make($sv->conf, $finfo)->unparse_setting($rfs);
+            $rfs->id = $isnew ? "new" : $rfs->id;
+            $rfs->required = false;
+            $sv->set_oldv($si->name, $rfs);
         } else if ($si->name_matches("rf/", "*", "/values_text")) {
             $rfs = $sv->oldv("rf/{$si->name1}");
             $vs = [];
@@ -135,10 +131,18 @@ class ReviewForm_SettingParser extends SettingParser {
         if ($sv->error_if_duplicate_member($vpfx, $ctr, "symbol", "Field symbol")) {
             return false;
         }
-        if (is_string($rfv->symbol)
-            && (ctype_digit($rfv->symbol)
-                ? str_starts_with($rfv->symbol, "0")
-                : !ctype_upper($rfv->symbol) || strlen($rfv->symbol) > 1)) {
+        $symbol = $rfv->symbol;
+        if (is_int($symbol)) {
+            $invalid = $symbol <= 0;
+        } else if (is_string($symbol) && ctype_digit($symbol)) {
+            $invalid = str_starts_with($symbol, "0");
+            $symbol = intval($symbol);
+        } else if (is_string($symbol)) {
+            $invalid = !ctype_upper($symbol) || strlen($symbol) > 1;
+        } else {
+            $invalid = true;
+        }
+        if ($invalid) {
             $sv->error_at("{$vpfx}/{$ctr}/symbol", "<0>Symbol must be a number or a single capital letter");
             return false;
         }
@@ -146,6 +150,7 @@ class ReviewForm_SettingParser extends SettingParser {
             && $sv->error_if_duplicate_member($vpfx, $ctr, "name", "Field value")) {
             return false;
         }
+        $rfv->symbol = $symbol;
         return true;
     }
 
@@ -157,7 +162,7 @@ class ReviewForm_SettingParser extends SettingParser {
         $newrfv = [];
         $error = false;
         foreach ($sv->oblist_nondeleted_keys($vpfx) as $ctr) {
-            $rfv = $sv->object_newv("{$vpfx}/{$ctr}");
+            $rfv = $sv->newv("{$vpfx}/{$ctr}");
             $newrfv[] = $rfv;
             if (!$this->_check_value($vpfx, $ctr, $rfv, $sv)) {
                 $error = true;
@@ -173,9 +178,9 @@ class ReviewForm_SettingParser extends SettingParser {
         // check that values are consecutive
         $key0 = $newrfv[0]->symbol;
         $flip = $option_letter = is_string($key0) && ctype_upper($key0);
-        if ($key0 == 1) {
+        if ($key0 === 1) {
             foreach ($newrfv as $i => $rfv) {
-                $error = $error || $rfv->symbol != $i + 1;
+                $error = $error || $rfv->symbol !== $i + 1;
             }
         } else if ($option_letter) {
             foreach ($newrfv as $i => $rfv) {
@@ -230,7 +235,7 @@ class ReviewForm_SettingParser extends SettingParser {
         // save values
         $sv->save("{$fpfx}/values_storage", $flip ? array_reverse($values) : $values);
         $sv->save("{$fpfx}/ids", $flip ? array_reverse($ids) : $ids);
-        $sv->save("{$fpfx}/start", ctype_digit($key0) ? intval($key0) : $key0);
+        $sv->save("{$fpfx}/start", $key0);
     }
 
     private function mark_values_error(SettingValues $sv) {
@@ -242,24 +247,6 @@ class ReviewForm_SettingParser extends SettingParser {
         }
     }
 
-    /** @param object $rfj */
-    private function _fix_req_condition(SettingValues $sv, $rfj) {
-        $q = "";
-        $rl = null;
-        if (($rfj->exists_if ?? "") !== "") {
-            $ps = new PaperSearch($sv->conf->root_user(), $rfj->exists_if ?? "");
-            if (!($ps->term() instanceof True_SearchTerm)) {
-                $rl = ReviewFieldCondition_SettingParser::condition_round_list($ps);
-                $q = $rl === null ? $rfj->exists_if : "";
-            }
-        }
-        $rfj->exists_if = $q;
-        $rfj->round_mask = 0;
-        foreach ($rl ?? [] as $rn) {
-            $rfj->round_mask |= 1 << $rn;
-        }
-    }
-
     private function _apply_req_review_form(Si $si, SettingValues $sv) {
         $known_ids = [];
         foreach ($sv->oblist_keys("rf") as $ctr) {
@@ -267,7 +254,7 @@ class ReviewForm_SettingParser extends SettingParser {
         }
         $nrfj = [];
         foreach ($sv->oblist_nondeleted_keys("rf") as $ctr) {
-            $rfj = $sv->object_newv("rf/{$ctr}");
+            $rfj = $sv->newv("rf/{$ctr}");
             if ($rfj->id === "new") {
                 $pattern = $rfj->type === "text" ? "t%02d" : "s%02d";
                 for ($i = 1; isset($known_ids[$rfj->id]); ++$i) {
@@ -277,7 +264,6 @@ class ReviewForm_SettingParser extends SettingParser {
             }
             if (($finfo = ReviewFieldInfo::find($sv->conf, $rfj->id))) {
                 $sv->error_if_missing("rf/{$ctr}/name");
-                $this->_fix_req_condition($sv, $rfj);
                 $rfj->order = $rfj->order ?? 1000000;
                 $nrfj[] = $rfj;
             } else {
@@ -626,7 +612,7 @@ Note that complex HTML will not appear on offline review forms.</p></div>', 'set
 
         echo "<div id=\"settings-rform\"></div>";
         if ($rfedit) {
-            Ht::button("Add field", ["class" => "ui js-settings-rf-add"]);
+            echo Ht::button("Add field", ["class" => "ui js-settings-rf-add"]);
         }
 
         $sj = [];

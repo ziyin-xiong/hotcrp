@@ -3,15 +3,26 @@
 // Copyright (c) 2006-2022 Eddie Kohler; see LICENSE.
 
 class Response_Setting {
+    /** @var int */
     public $id;
+    /** @var string */
     public $name;
+    /** @var ?int */
     public $open;
+    /** @var ?int */
     public $done;
+    /** @var ?int */
     public $grace;
+    /** @var ?int */
     public $wordlimit;
-    private $old_wordlimit; // needed to determine correct default_instructions
-    public $condition;
+    /** @var string */
+    public $condition = "all";
+    /** @var string */
     public $instructions;
+
+    private $old_wordlimit; // needed to determine correct default_instructions
+    /** @var bool */
+    public $deleted = false;
 
     /** @return string */
     function default_instructions(Conf $conf) {
@@ -27,7 +38,7 @@ class Response_Setting {
         $rs->done = $rrd->done;
         $rs->grace = $rrd->grace;
         $rs->wordlimit = $rs->old_wordlimit = $rrd->words;
-        $rs->condition = $rrd->search ? $rrd->search->q : "";
+        $rs->condition = $rrd->search ? $rrd->search->q : "all";
         $rs->instructions = $rrd->instructions ?? $rs->default_instructions($conf);
         return $rs;
     }
@@ -37,9 +48,38 @@ class Response_Setting {
         $rs = new Response_Setting;
         $rs->name = "";
         $rs->wordlimit = $rs->old_wordlimit = 500;
-        $rs->condition = "";
+        $rs->condition = "all";
         $rs->instructions = $rs->default_instructions($conf);
         return $rs;
+    }
+
+    /** @return object */
+    function unparse_json(Conf $conf) {
+        $j = (object) [];
+        if ($this->name !== "" && $this->name !== "unnamed") {
+            $j->name = $this->name;
+        }
+        if ($this->open > 0) {
+            $j->open = $this->open;
+        }
+        if ($this->done > 0) {
+            $j->done = $this->done;
+        }
+        if ($this->grace > 0) {
+            $j->grace = $this->grace;
+        }
+        if ($this->wordlimit !== 500) {
+            $j->words = $this->wordlimit ?? 0;
+        }
+        if (($this->condition ?? "") !== ""
+            && $this->condition !== "all") {
+            $j->condition = $this->condition;
+        }
+        if (($this->instructions ?? "") !== ""
+            && $this->instructions !== $this->default_instructions($conf)) {
+            $j->instructions = $this->instructions;
+        }
+        return $j;
     }
 }
 
@@ -186,7 +226,7 @@ class Response_SettingParser extends SettingParser {
             }
             return false;
         } else if ($si->name2 === "/condition") {
-            if (($v = $sv->base_parse_req($si)) !== "") {
+            if (($v = $sv->base_parse_req($si)) !== "" && $v !== "all") {
                 $search = new PaperSearch($sv->conf->root_user(), $v);
                 foreach ($search->message_list() as $mi) {
                     $sv->append_item_at($si->name, $mi);
@@ -204,17 +244,17 @@ class Response_SettingParser extends SettingParser {
             return true;
         }
 
-        $rrds = [];
+        $rss = [];
         foreach ($sv->oblist_keys("response") as $ctr) {
-            $rrd = $sv->object_newv("response/{$ctr}");
-            '@phan-var-force Response_Setting $rrd';
-            if ($sv->reqstr("response/{$ctr}/delete")) {
-                if ($rrd->id > 1) {
-                    $this->round_transform[] = "when {$rrd->id} then 1";
+            $rs = $sv->newv("response/{$ctr}");
+            '@phan-var-force Response_Setting $rs';
+            if ($rs->deleted) {
+                if ($rs->id > 1) {
+                    $this->round_transform[] = "when {$rs->id} then 1";
                 }
             } else {
                 $sv->check_date_before("response/{$ctr}/open", "response/{$ctr}/done", false);
-                array_splice($rrds, $rrd->name === "" ? 0 : count($rrds), 0, [$rrd]);
+                array_splice($rss, $rs->name === "" ? 0 : count($rss), 0, [$rs]);
             }
         }
 
@@ -224,19 +264,8 @@ class Response_SettingParser extends SettingParser {
         }
 
         $jrl = [];
-        foreach ($rrds as $i => $rs) {
-            $jr = [];
-            $rs->name !== "" && $rs->name !== "unnamed" && ($jr["name"] = $rs->name);
-            $rs->open > 0 && ($jr["open"] = $rs->open);
-            $rs->done > 0 && ($jr["done"] = $rs->done);
-            $rs->grace > 0 && ($jr["grace"] = $rs->grace);
-            $rs->wordlimit !== 500 && ($jr["words"] = $rs->wordlimit ?? 0);
-            ($rs->condition ?? "") !== "" && ($jr["condition"] = $rs->condition);
-            if (($rs->instructions ?? "") !== ""
-                && $rs->instructions !== $rs->default_instructions($sv->conf)) {
-                $jr["instructions"] = $rs->instructions;
-            }
-            $jrl[] = (object) $jr;
+        foreach ($rss as $i => $rs) {
+            $jrl[] = $rs->unparse_json($sv->conf);
             if ($rs->id !== null && $i + 1 !== $rs->id) {
                 $this->round_transform[] = "when {$rs->id} then " . ($i + 1);
             }
