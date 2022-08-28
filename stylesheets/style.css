@@ -2992,6 +2992,12 @@ hr.g, hr.mg, hr.ug {
 	margin-top: 1ex;
 }
 
+.rev_predict {
+	padding-left: 1.3125em;
+    display: inline-block;
+	text-indent: 0;
+	min-width: 1em;
+}
 
 .rev_num {
 	font-size: larger;

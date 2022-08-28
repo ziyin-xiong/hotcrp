@@ -44,7 +44,7 @@ class ReviewFieldInfo {
     function __construct($short_id, $is_sfield, $main_storage, $json_storage, $is_pfield) {
         $this->short_id = $short_id;
         $this->is_sfield = $is_sfield;
-        $this->predict = $predict;
+        $this->is_pfield = $is_pfield;
         $this->main_storage = $main_storage;
         $this->json_storage = $json_storage;
     }
@@ -123,6 +123,8 @@ abstract class ReviewField implements JsonSerializable {
     /** @var bool
      * @readonly */
     public $is_sfield;
+    /** @var bool
+     * @readonly */
     public $is_pfield;
 
     static private $view_score_map = [
@@ -192,7 +194,7 @@ abstract class ReviewField implements JsonSerializable {
     function assign_json($j) {
         $this->name = $j->name ?? "Field name";
         $this->name_html = htmlspecialchars($this->name);
-        $this->type = $j->type ?? ($this->is_sfield ? "radio" : ($this->is_pfield ? "slider" : "text"));
+        $this->type = $j->type ?? ($this->is_sfield ? "radio" : ($this->is_pfield ? "range" : "text"));
         $this->description = $j->description ?? "";
         $vis = $j->visibility ?? null;
         if ($vis === null /* XXX backward compat */) {
@@ -982,7 +984,9 @@ class Score_ReviewField extends ReviewField {
 
 class Predict_ReviewField extends ReviewField {
     /** @var list<string> */
-    private $values = [];
+    private $values = [];  // "accept" "reject" ...
+    /** @var list<int> */
+    private $percentage = [];
     /** @var list<int|string> */
     private $symbols = [];
     /** @var ?list<int> */
@@ -1007,15 +1011,16 @@ class Predict_ReviewField extends ReviewField {
     ];
 
     function __construct(Conf $conf, ReviewFieldInfo $finfo) {
-        assert($finfo->predict);
+        assert($finfo->is_pfield);
         parent::__construct($conf, $finfo);
-        $this->predict = true;
+        $this->type = "range";
     }
 
     /** @param object $j */
     function assign_json($j) {
         parent::assign_json($j);
-        $this->values = $j->values ?? [];  // $this->values = $j->values ?? $j->options ?? [];
+        $this->values = $j->values ?? $j->options ?? [];
+        $this->percentage = $j->percentage ?? [];
         $nvalues = count($this->values);
         $ol = $j->start ?? $j->option_letter ?? null;
         $this->option_letter = 0;
@@ -1063,11 +1068,17 @@ class Predict_ReviewField extends ReviewField {
         return $this->values;
     }
 
+    /** @return list<int> */
+    function percentage() {
+        return $this->percentage;
+    }
+
     /** @return bool */
     function checkSum() {
         $total = 0;
-        foreach($this->values as $value){
-            $total += (int)$value;
+        foreach($this->percentage as $p){
+            assert(is_int($p));
+            $total += $p;
         }
         return ($total === 100) ? true : false;
     }
@@ -1086,10 +1097,12 @@ class Predict_ReviewField extends ReviewField {
     function ids() {
         return $this->ids ?? range(1, count($this->values));
     }
-
+    
+    /* return a json object */
     function unparse_json($style) {
         $j = parent::unparse_json($style);
         $j->values = $this->values;
+        $j->percentage = $this->percentage;
         if (!empty($this->ids)
             && ($style !== self::UJ_STORAGE
                 || $this->ids !== range(1, count($this->values)))) {
@@ -1113,6 +1126,7 @@ class Predict_ReviewField extends ReviewField {
         $rfs->type = "range";
         $n = count($this->values);
         $rfs->values = $this->values;
+        $rfs->percentage = $this->percentage;
         $rfs->ids = $this->ids();
         if ($this->option_letter) {
             $rfs->start = chr($this->option_letter - $n);
@@ -1136,16 +1150,15 @@ class Predict_ReviewField extends ReviewField {
 
     /** @return int */
     function nvalues() {
-        return count($this->values);
+        $n = count($this->values);
+        assert($n === count($this->percentage));
+        return count(n);
     }
 
-    /** @param ?int|string $value
+    /** @param ?int|string $fval
      * @return bool */
-    function value_empty($value) {
-        // see also ReviewInfo::has_nonempty_field
-        return $value === null
-            || $value === ""
-            || (int) $value === 0;
+    function value_empty($fval) {
+        return $value === null || $value === "" || (int)$value === 0;
     }
 
     /** @return ?array{string,string} */
@@ -1156,14 +1169,15 @@ class Predict_ReviewField extends ReviewField {
     }
 
     /** @param int $option_letter
-     * @param int|float $value
-     * @return string */
-    static function unparse_letter($option_letter, $value) {
-        $ivalue = (int) $value;
+     * @param int|float $fval
+     * @return string 
+     * unparse: change number into string */
+    static function unparse_letter($option_letter, $fval) {
+        $ivalue = (int) $fval;
         $ch = $option_letter - $ivalue;
-        if ($value < $ivalue + 0.25) {
+        if ($fval < $ivalue + 0.25) {
             return chr($ch);
-        } else if ($value < $ivalue + 0.75) {
+        } else if ($fval < $ivalue + 0.75) {
             return chr($ch - 1) . chr($ch);
         } else {
             return chr($ch - 1);
@@ -1172,7 +1186,6 @@ class Predict_ReviewField extends ReviewField {
 
     /** @param int|float $value
      * @return string */
-    // TODO: Slider问题可能需要重新设计区间划分和显示样式
     function value_class($value) {
         $info = self::$scheme_info[$this->scheme];
         if (count($this->values) <= 1) {
@@ -1205,7 +1218,7 @@ class Predict_ReviewField extends ReviewField {
         }
         if (!$this->option_letter || is_numeric($value)) {
             $value = (float) $value;
-        } else if (strlen($value) === 1) {  // value is string
+        } else if (strlen($value) === 1) {
             $value = (float) $this->option_letter - ord($value);
         } else if (ord($value[0]) + 1 === ord($value[1])) {
             $value = ($this->option_letter - ord($value[0])) - 0.5;
@@ -1222,23 +1235,21 @@ class Predict_ReviewField extends ReviewField {
         } else {
             $text = $value;
         }
-        /** 
-         *         if (($flags & self::VALUE_SC) !== 0) {
-         *   $vc = $this->value_class($value);
-         *   $text = "<span class=\"{$vc}\">{$text}</span>";  // TODO:predict是否需要根据区间划分显示样式？暂未设计
-         *}
-        */
+        if (($flags & self::VALUE_SC) !== 0) {
+            $vc = $this->value_class($value);
+            $text = "<span class=\"{$vc}\">{$text}</span>";
+        }
         return $text;
     }
 
     /** @param int|float $value */
     function unparse_average($value) {
-        return (string) $this->unparse_value($value, 0, "%.2f");  // 输出保留两位小数的正确字符串
+        return (string) $this->unparse_value($value, 0, "%.2f");
     }
 
     /** @param string $text
      * @return int|false */
-    function parse_value($text) {
+    function parse_string($text) {
         $text = trim($text);
         if ($text === "") {
             return 0;
@@ -1272,14 +1283,40 @@ class Predict_ReviewField extends ReviewField {
      * @param int|string $reqv */
     private function print_item($i, $fv, $reqv) {
         $symbol = $i < 0 ? "0" : $this->symbols[$i];
-        $opt = ["id" => "{$this->short_id}_{$symbol}"];
-        if ($fv !== $reqv) {
-            $opt["data-default-checked"] = $fv === $symbol;
+        if ($i < 0) {
+            echo 'No entry';
+        } else {
+            $vc = $this->value_class($i + 1);
+            echo '<strong class="rev_predict ', $vc, '">', $symbol;
+            if ($this->values[$i] !== "") {
+                echo '.</strong> ', htmlspecialchars($this->values[$i]);  // 选项内容
+            } else {
+                echo '</strong>';
         }
-        // TODO: print选项内容label 比如：reject/accept
-        include("slider.html");  // print滑动条
+        echo '<div class="slider"><span class="selected">50</span><input type="range" id="slider-input-'.strval($i).'" min="0" max="100" value="50"></div>';  // 滑动条
+    }
+    
+    /** @param int $i */
+    private function js($i) {
+        $n = count($this->values);
+        $step = $this->flip ? $n -1 : 1;
+        echo '<script type='text/javascript'>';
+        echo 'var selected = new Array()';
+        for ($i = $this->flip ? $n - 1 : 0; $i >= 0 && $i < $n; $i += $step) {  // 监听所有滑动条
+            echo 'const sliderEl'.strval($i).' = document.querySelector("#slider-input-'.strval($i).'");';
+            echo 'const selectedEl'.strval($i).' = document.querySelector(".selected-'.strval($i).'");';  # TODO：这里结合wxb的新代码修改多个滑动条的命名问题
+            echo 'sliderEl'.strval($i).'.addEventListener("input", () => {selectedEl'.strval($i).'.innerHTML = sliderEl'.strval($i).'.value;});';
+        };
+        
+        // TODO:添加检查所有滑动条都被修改的机制
+        
+        for($i = 0; $i >= 0 && $i < $n; $i += 1) {
+            echo 'selected.push(selectedEl'.strval($i).');';
+        }  // 滑动条的值按照i的顺序存入数组selected 
+        echo 'window.location.href="reviewfield.php?data="+selected';  // 向php发送数据
+        echo "</script>";
         header("Content-type: text/html; charset=utf-8");
-        $this->values[$i] = $_GET['data'];  // 获取数据
+        $this->percentage = $_GET['data'];  // php接收数据
     }
 
     function print_web_edit($fv, $reqv, $args) {
@@ -1293,58 +1330,14 @@ class Predict_ReviewField extends ReviewField {
         echo '<div class="revev">';
         $step = $this->flip ? -1 : 1;
         for ($i = $this->flip ? $n - 1 : 0; $i >= 0 && $i < $n; $i += $step) {
-            $this->print_choice($i, $fv, $reqv);
+            $this->print_item($i, $fv, $reqv);
         }
         if (!$this->required) {
-            $this->print_choice(-1, $fv, $reqv);
+            $this->print_item(-1, $fv, $reqv);
         }
         echo '</div></div>';
-    }
-
-    function unparse_text_field(&$t, $fv, $args) {
-        if ($fv !== "" && $fv !== "0") {
-            $this->unparse_text_field_header($t, $args);
-            $i = array_search($fv, $this->symbols);
-            if ($i !== false && $this->values[$i] !== "") {
-                $t[] = prefix_word_wrap("{$fv}. ", $this->values[$i], strlen($fv) + 2, null, $args["flowed"]);
-            } else {
-                $t[] = "{$fv}\n";
-            }
-        }
-    }
-
-    function unparse_offline_field(&$t, $fv, $args) {
-        $this->unparse_offline_field_header($t, $args);
-        $t[] = "==-== Choices:\n";
-        $n = count($this->values);
-        $step = $this->flip ? -1 : 1;
-        for ($i = $this->flip ? $n - 1 : 0; $i >= 0 && $i < $n; $i += $step) {
-            if ($this->values[$i] !== "") {
-                $y = "==-==    {$this->symbols[$i]}. ";
-                /** @phan-suppress-next-line PhanParamSuspiciousOrder */
-                $t[] = prefix_word_wrap($y, $this->values[$i], str_pad("==-==", strlen($y)));
-            } else {
-                $t[] = "==-==   {$this->symbols[$i]}\n";
-            }
-        }
-        if (!$this->required) {
-            $t[] = "==-==    No entry\n==-== Enter your choice:\n";
-        } else if ($this->option_letter) {
-            $t[] = "==-== Enter the letter of your choice:\n";
-        } else {
-            $t[] = "==-== Enter the number of your choice:\n";
-        }
-        $t[] = "\n";
-        if (($i = array_search($fv, $this->symbols)) !== false) {
-            if ($this->values[$i] !== "") {
-                $t[] = "{$this->symbols[$i]}. {$this->values[$i]}\n";
-            } else {
-                $t[] = "{$this->symbols[$i]}\n";
-            }
-        } else if ($this->required) {
-            $t[] = "(Your choice here)\n";
-        } else {
-            $t[] = "No entry\n";
+        if (!checkSum()) {  // 弹出警告
+            echo '<script>alert("The sum of the predicted values of all options is not 100, please change it!")</script>';
         }
     }
 }
