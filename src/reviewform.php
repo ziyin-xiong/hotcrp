@@ -190,12 +190,20 @@ class ReviewForm implements JsonSerializable {
         return $rj;
     }
 
-
     private function print_web_edit(PaperInfo $prow, ReviewInfo $rrow, Contact $contact,
                                     ReviewValues $rvalues = null) {
         $fi = $this->conf->format_info(null);
         echo '<div class="rve">';
+        if (empty($rrow->types)) {
+            $rrow->get_types();
+        }
+        $cnt = 0;
         foreach ($rrow->viewable_fields($contact) as $f) {
+            if ($rrow->types[$cnt] === "radio" || $rrow->types[$cnt] === "checkbox") {
+                $f = $f->create_score($rrow->data_string());
+            } elseif ($rrow->types[$cnt] === "slider") {
+                $f = $f->create_slider($rrow->data_string());
+            }
             $fval = $f->normalize_value($f->unparse_value($rrow->fields[$f->order]));
             if ($rvalues && isset($rvalues->req[$f->short_id])) {
                 $rval = $f->normalize_value($rvalues->req[$f->short_id]);
@@ -203,6 +211,7 @@ class ReviewForm implements JsonSerializable {
                 $rval = $fval;
             }
             $f->print_web_edit($fval, $rval, ["format" => $fi, "rvalues" => $rvalues]);
+            $cnt += 1;
         }
         echo "</div>\n";
     }

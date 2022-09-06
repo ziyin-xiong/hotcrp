@@ -562,6 +562,18 @@ class Score_ReviewField extends ReviewField {
         parent::__construct($conf, $finfo);
         $this->type = "radio";
     }
+    
+    function get_values($data) {
+        $left = strpos($data,'options=[');
+        $left += 9;
+        $data = substr($data, $left);
+        $right = strpos($data, '],');
+        $data = substr($data, 0, $right);
+        $options = explode('][',$data);
+        foreach($options as $key=>$value) {
+            $this->values[] = $value;
+        }
+    }
 
     /** @param object $j */
     function assign_json($j) {
@@ -1016,6 +1028,18 @@ class Predict_ReviewField extends ReviewField {
         $this->type = "range";
     }
 
+    function get_values($data) {
+        $left = strpos($data,'options=[');
+        $left += 9;
+        $data = substr($data, $left);
+        $right = strpos($data, '],');
+        $data = substr($data, 0, $right);
+        $options = explode('][',$data);
+        foreach($options as $key=>$value) {
+            $this->values[] = $value;
+        }
+    }
+
     /** @param object $j */
     function assign_json($j) {
         parent::assign_json($j);
@@ -1351,6 +1375,55 @@ class Text_ReviewField extends ReviewField {
         assert(!$finfo->is_pfield);
         parent::__construct($conf, $finfo);
         $this->type = "text";
+    }
+    
+    /** param string $data */
+    function create_score($data) {
+        $score = new Score_ReviewField();
+        $score->short_id = $this->short_id;
+        $score->conf = $this->conf;
+        $score->name = $this->name;
+        $score->name_html = $this->name_html;
+        $score->type = "radio";
+        $score->description = $this->description;
+        $score->_search_keyword = $this->_search_keyword;
+        $score->view_score = $this->view_score;
+        $score->order = $this->order;
+        $score->round_mask = $this->round_mask;
+        $score->exists_if = $this->exists_if;
+        $score->_exists_search = $this->_exists_search;
+        $score->_need_exists_search = $this->_need_exists_search;
+        $score->required = $this->required;
+        $score->main_storage = $this->main_storage;
+        $score->json_storage = $this->json_storage;
+        $score->is_sfield = true;
+        $score->is_pfield = false;
+        $score->values = $score->get_values($data);
+        return $score;
+    }
+
+    function create_slider($data) {
+        $slider = new Predict_ReviewField();
+        $slider->short_id = $this->short_id;
+        $slider->conf = $this->conf;
+        $slider->name = $this->name;
+        $slider->name_html = $this->name_html;
+        $slider->type = "range";
+        $slider->description = $this->description;
+        $slider->_search_keyword = $this->_search_keyword;
+        $slider->view_score = $this->view_score;
+        $slider->order = $this->order;
+        $slider->round_mask = $this->round_mask;
+        $slider->exists_if = $this->exists_if;
+        $slider->_exists_search = $this->_exists_search;
+        $slider->_need_exists_search = $this->_need_exists_search;
+        $slider->required = $this->required;
+        $slider->main_storage = $this->main_storage;
+        $slider->json_storage = $this->json_storage;
+        $slider->is_sfield = false;
+        $slider->is_pfield = true;
+        $slider->values = $slider->get_values($data);
+        return $slider;
     }
 
     /** @param object $j */

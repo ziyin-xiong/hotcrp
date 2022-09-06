@@ -73,6 +73,8 @@ class ReviewInfo implements JsonSerializable {
     private $data;
     /** @var ?object */
     private $_data;
+    /** @var array<string> */
+    public $types = array();
 
     /** @var list<null|int|string> */
     public $fields;
@@ -531,7 +533,6 @@ class ReviewInfo implements JsonSerializable {
         return $this->reviewViewScore;
     }
 
-
     /** @param bool $has_options
      * @return array */
     function fstorage($has_options) {
@@ -606,7 +607,6 @@ class ReviewInfo implements JsonSerializable {
         }
         return $fs;
     }
-
 
     /** @param Contact $c
      * @param list<Contact> &$assigned */
@@ -785,7 +785,19 @@ class ReviewInfo implements JsonSerializable {
         $s = json_encode_db($this->_data);
         return $s === "{}" ? null : $s;
     }
-
+    
+    /** @return ?string */
+    function get_types(){
+        $str = $this->data_string();
+        $field_list = explode('###', $str);
+        foreach($field_list as $key => $value) {
+            $left = strpos($value, 'type=');
+            $left += 5;
+            $value = substr($value, $left);
+            $right = strpos($value, ',');
+            array_push($types, substr($value, 0, $right));
+        }
+    }
 
     /** @param ReviewHistoryInfo $rhrow
      * @return ?ReviewInfo */
