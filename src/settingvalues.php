@@ -64,6 +64,8 @@ class SettingValues extends MessageSet {
     private $_table_lock = [];
     /** @var associative-array<string,true> */
     private $_diffs = [];
+    /** @var associative-array<string,false> */
+    private $_no_diffs = [];
     /** @var associative-array<string,true> */
     private $_invalidate_caches = [];
 
@@ -183,13 +185,13 @@ class SettingValues extends MessageSet {
     function add_json_string($jstr, $filename = null) {
         assert($this->_use_req === true);
         assert(empty($this->_oblist_ensured));
-        $this->_jp = (new JsonParser($jstr))->filename($filename);
+        $this->_jp = (new JsonParser($jstr))->flags(JsonParser::JSON_ALLOW_NBSP)->filename($filename);
         $j = $this->_jp->decode();
         if ($j !== null || $this->_jp->error_type === 0) {
             $this->_jpath = "";
             $this->set_json_parts("", $j);
         } else {
-            $mi = $this->error_at(null, "<0>Invalid JSON");
+            $mi = $this->error_at(null, "<0>Invalid JSON: " . $this->_jp->last_error_msg());
             $mi->pos1 = $mi->pos2 = $this->_jp->error_pos;
         }
         $this->_jpath = null;
@@ -1397,7 +1399,9 @@ class SettingValues extends MessageSet {
                     continue;
                 }
                 //error_log("{$n}: " . json_encode($dbsettings[$n][1] ?? null) . "=>" . json_encode($v[0] ?? null) . "; " . json_encode($dbsettings[$n][2] ?? null) . "=>" . json_encode($v[1] ?? null));
-                $this->_diffs[$n] = true;
+                if (!isset($this->_no_diffs[$n])) {
+                    $this->_diffs[$n] = true;
+                }
                 if ($v !== null) {
                     $av[] = [$n, $v[0], $v[1]];
                 } else {
@@ -1436,6 +1440,11 @@ class SettingValues extends MessageSet {
     /** @param string $siname */
     function mark_diff($siname)  {
         $this->_diffs[$siname] = true;
+    }
+
+    /** @param string $siname */
+    function mark_no_diff($siname)  {
+        $this->_no_diffs[$siname] = false;
     }
 
     /** @param string $siname

@@ -1385,7 +1385,8 @@ class PaperInfo {
     /** @return bool */
     function can_author_view_decision() {
         return $this->outcome !== 0
-            && $this->conf->time_all_author_view_decision();
+            && $this->conf->_au_seedec
+            && $this->conf->_au_seedec->test($this, null);
     }
 
     /** @return bool */
@@ -2061,8 +2062,14 @@ class PaperInfo {
     }
 
     /** @return string */
-    static function document_sql() {
+    static function document_query() {
         return "paperId, paperStorageId, timestamp, mimetype, sha1, crc32, documentType, filename, infoJson, size, filterType, originalStorageId, inactive";
+    }
+
+    /** @return string
+     * @deprecated */
+    static function document_sql() {
+        return self::document_query();
     }
 
     /** @param int $dtype
@@ -2096,13 +2103,21 @@ class PaperInfo {
              || ($dtype === DTYPE_FINAL
                  && $did == $this->finalPaperStorageId))
             && !$full) {
+            $args = [
+                "paperStorageId" => $did, "paperId" => $this->paperId,
+                "documentType" => $dtype, "timestamp" => (int) $this->timestamp,
+                "mimetype" => $this->mimetype, "hash" => $this->sha1,
+                "size" => (int) $this->size
+            ];
             $infokey = $dtype === DTYPE_SUBMISSION ? "paper_infoJson" : "final_infoJson";
-            $infoJson = $this->$infokey ?? false;
-            return new DocumentInfo(["paperStorageId" => $did, "paperId" => $this->paperId, "documentType" => $dtype, "timestamp" => $this->timestamp ?? null, "mimetype" => $this->mimetype, "sha1" => $this->sha1, "size" => $this->size, "infoJson" => $infoJson, "is_partial" => true], $this->conf, $this);
+            if (isset($this->$infokey)) {
+                $args["infoJson"] = $this->$infokey;
+            }
+            return new DocumentInfo($args, $this->conf, $this);
         }
 
         if ($this->_document_array === null) {
-            $result = $this->conf->qe("select " . self::document_sql() . " from PaperStorage where paperId=? and inactive=0", $this->paperId);
+            $result = $this->conf->qe("select " . self::document_query() . " from PaperStorage where paperId=? and inactive=0", $this->paperId);
             $this->_document_array = [];
             while (($di = DocumentInfo::fetch($result, $this->conf, $this))) {
                 $this->_document_array[$di->paperStorageId] = $di;
@@ -2110,7 +2125,7 @@ class PaperInfo {
             Dbl::free($result);
         }
         if (!array_key_exists($did, $this->_document_array)) {
-            $result = $this->conf->qe("select " . self::document_sql() . " from PaperStorage where paperStorageId=?", $did);
+            $result = $this->conf->qe("select " . self::document_query() . " from PaperStorage where paperStorageId=?", $did);
             $this->_document_array[$did] = DocumentInfo::fetch($result, $this->conf, $this);
             Dbl::free($result);
         }
@@ -2205,7 +2220,7 @@ class PaperInfo {
                     $dids = array_merge($dids, $ov->option->value_dids($ov));
                 }
             }
-            $this->conf->qe("update PaperStorage set inactive=1 where paperId=? and documentType>=? and paperStorageId?A", $this->paperId, DTYPE_FINAL, $dids);
+            $this->conf->qe("update PaperStorage set inactive=(paperStorageId?A) where paperId=? and documentType>=?", $dids, $this->paperId, DTYPE_FINAL);
             $this->_pause_mark_inactive_documents = null;
         } else {
             $this->_pause_mark_inactive_documents = 2;

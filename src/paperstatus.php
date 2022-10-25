@@ -174,13 +174,7 @@ class PaperStatus extends MessageSet {
         if ($doc->filename) {
             $d->filename = $doc->filename;
         }
-        $meta = null;
-        if (isset($doc->infoJson) && is_object($doc->infoJson)) {
-            $meta = $doc->infoJson;
-        } else if (isset($doc->infoJson) && is_string($doc->infoJson)) {
-            $meta = json_decode($doc->infoJson);
-        }
-        if ($meta) {
+        if (($meta = $doc->metadata()) !== null) {
             $d->metadata = $meta;
         }
         if ($this->export_content
@@ -374,10 +368,10 @@ class PaperStatus extends MessageSet {
             $doc = $docj;
         } else {
             $doc = $dochash = null;
-            if (!isset($docj->hash) && isset($docj->sha1) && is_string($docj->sha1)) {
-                $dochash = Filer::sha1_hash_as_text($docj->sha1);
-            } else if (isset($docj->hash) && is_string($docj->hash)) {
+            if (isset($docj->hash) && is_string($docj->hash)) {
                 $dochash = Filer::hash_as_text($docj->hash);
+            } else if (!isset($docj->hash) && isset($docj->sha1) && is_string($docj->sha1)) {
+                $dochash = Filer::sha1_hash_as_text($docj->sha1);
             }
 
             if ($this->prow
@@ -386,8 +380,7 @@ class PaperStatus extends MessageSet {
                 $result = $this->conf->qe("select * from PaperStorage where paperId=? and paperStorageId=? and documentType=?", $this->prow->paperId, $docid, $o->id);
                 $doc = DocumentInfo::fetch($result, $this->conf, $this->prow);
                 Dbl::free($result);
-                if (!$doc
-                    || ((string) $dochash !== "" && $doc->text_hash() !== $dochash)) {
+                if ($doc && ($dochash ?? "") !== "" && $dochash !== $doc->text_hash()) {
                     $doc = null;
                 }
             }
@@ -395,7 +388,7 @@ class PaperStatus extends MessageSet {
             if (!$doc) {
                 $args = [
                     "paperId" => $this->paperId,
-                    "sha1" => (string) $dochash,
+                    "hash" => $dochash,
                     "documentType" => $o->id
                 ];
                 foreach (["timestamp", "mimetype", "content", "content_base64",
@@ -406,8 +399,8 @@ class PaperStatus extends MessageSet {
                 if (isset($docj->filename)) {
                     $args["filename"] = DocumentInfo::sanitize_filename($docj->filename);
                 }
-                DocumentInfo::fix_mimetype($args);
                 $doc = new DocumentInfo($args, $this->conf, $this->prow);
+                $doc->analyze_content();
             }
         }
 
@@ -1350,7 +1343,7 @@ class PaperStatus extends MessageSet {
         if (($this->_save_status & self::SAVE_STATUS_NEWSUBMIT) !== 0) {
             $actions[] = "submitted";
         } else if (($this->_save_status & self::SAVE_STATUS_NEW) === 0
-                   && !empty($this->_xdiffs)) {
+                   && (!empty($this->_fdiffs) || !empty($this->_xdiffs))) {
             $actions[] = "edited";
         }
         if (empty($actions)) {

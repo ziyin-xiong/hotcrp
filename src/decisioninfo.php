@@ -23,6 +23,9 @@ class DecisionInfo {
     const CAT_ALL = 7;
     // see also DecisionSet::matchexpr
 
+    static private $class_name = [null, null, "dec-yes", null, "dec-no"];
+    static private $category_name = [null, null, "accept", null, "reject"];
+
 
     /** @param int $id
      * @param string $name */
@@ -51,23 +54,13 @@ class DecisionInfo {
 
     /** @return string */
     function status_class() {
-        if ($this->category === self::CAT_YES) {
-            return "dec-yes";
-        } else if ($this->category === self::CAT_NO) {
-            return "dec-no";
-        } else {
-            return "dec-undecided";
-        }
+        return self::$class_name[$this->category] ?? "dec-maybe";
     }
 
     /** @param Decision_Setting $ds */
     function unparse_setting($ds) {
         $ds->id = $this->id;
         $ds->name = $this->name;
-        if ($this->category === self::CAT_YES) {
-            $ds->category = "accept";
-        } else if ($this->category === self::CAT_NO) {
-            $ds->category = "reject";
-        }
+        $ds->category = self::$category_name[$this->category] ?? "maybe";
     }
 }

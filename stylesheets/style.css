@@ -61,7 +61,7 @@ select, button {
 .ps-withdrawn {
 	color: #333333;
 }
-.dec-undecided, .ps-submitted {
+.dec-maybe, .ps-submitted {
 	color: #823e78;
 }
 .dec-no, .asspref-1 {
@@ -76,7 +76,7 @@ select, button {
 .asspref1 {
 	color: #008000;
 }
-.dec-yes, .pstat_decyes, .dark .asspref1 {
+.dec-yes, .dark .asspref1 {
 	color: #259f00;
 }
 
@@ -1698,6 +1698,7 @@ th.settings-simplehead {
 	width: fit-content;
 	min-width: 800px;
 	transition: opacity 0.5s;
+	background-color: white;
 }
 .settings-rf.fold2c, .settings-sf.fold2c {
 	background-color: #f9fbfb;
@@ -1718,13 +1719,14 @@ th.settings-simplehead {
 	position: absolute;
 	display: inline-block;
 	left: 50%;
-	left: calc(50% - 0.5em);
+	left: calc(50% - 1.5em);
 	right: auto;
 	top: 0;
 	user-select: none;
 	-webkit-user-select: none;
 	cursor: move;
 	opacity: 0.25;
+	padding: 0 1em;
 }
 hr.dropmark {
 	max-width: 800px;
@@ -2796,6 +2798,7 @@ div:hover > span.hoveronly, tr:hover > td > span.hoveronly {
 table.pltable {
 	line-height: 1.25;
 	border-collapse: separate;
+	overflow-wrap: break-word;
 }
 .pltable-fullw-container {
 	overflow-x: auto;

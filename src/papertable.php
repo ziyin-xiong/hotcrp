@@ -928,7 +928,7 @@ class PaperTable {
             // Accepted papers are sometimes not blind.
             if ($this->prow->outcome_sign <= 0
                 || !$this->user->can_view_decision($this->prow)
-                || !$this->conf->time_reviewer_view_accepted_authors()) {
+                || $this->conf->setting("seedec_hideau")) {
                 $sb = $this->conf->submission_blindness();
                 if ($sb === Conf::BLIND_ALWAYS
                     || ($sb === Conf::BLIND_OPTIONAL && $this->prow->blind)) {
@@ -1364,7 +1364,7 @@ class PaperTable {
         }
         $data = $this->highlight($this->prow->collaborators(), "co", $match);
         $option = $this->conf->option_by_id(PaperOption::COLLABORATORSID);
-        $this->_papstripBegin("pscollab", false, ["data-fold-storage" => "-p.collab", "class" => "need-fold-storage"]);
+        $this->_papstripBegin("pscollab", false, ["data-fold-storage" => "p.collab", "class" => "need-fold-storage"]);
         echo Ht::unstash_script("hotcrp.fold_storage.call(\$\$(\"foldpscollab\"))"),
             $this->papt("collaborators", $option->title_html(),
                         ["type" => "ps", "fold" => "pscollab"]),
@@ -1390,7 +1390,7 @@ class PaperTable {
         }
         ksort($pcconf);
         $option = $this->conf->option_by_id(PaperOption::PCCONFID);
-        $this->_papstripBegin("pspcconf", $this->allow_folds, ["data-fold-storage" => "-p.pcconf", "class" => "need-fold-storage"]);
+        $this->_papstripBegin("pspcconf", $this->allow_folds, ["data-fold-storage" => "p.pcconf", "class" => "need-fold-storage"]);
         echo Ht::unstash_script("hotcrp.fold_storage.call(\$\$(\"foldpspcconf\"))"),
             $this->papt("pc_conflicts", $option->title_html(),
                         ["type" => "ps", "fold" => "pspcconf"]),

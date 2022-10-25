@@ -39,8 +39,10 @@ class Conf {
     public $default_format;
     /** @var string */
     public $download_prefix;
-    /** @var bool|SearchTerm */
+    /** @var ?SearchTerm */
     public $_au_seerev;
+    /** @var ?SearchTerm */
+    public $_au_seedec;
     /** @var bool */
     public $disable_non_pc;
     /** @var bool */
@@ -228,9 +230,7 @@ class Conf {
     const BLIND_ALWAYS = 2;
     const BLIND_UNTILREVIEW = 3;
 
-    const SEEDEC_ADMIN = 0;
     const SEEDEC_REV = 1;
-    const SEEDEC_ALL = 2;
     const SEEDEC_NCREV = 3;
 
     const AUSEEREV_NO = 0;          // these values matter
@@ -332,9 +332,11 @@ class Conf {
 
     function load_settings() {
         $this->__load_settings();
-        if ($this->sversion < 269) {
+        if ($this->sversion < 271) {
             $old_nerrors = Dbl::$nerrors;
-            (new UpdateSchema($this))->run();
+            while ((new UpdateSchema($this))->run()) {
+                usleep(50000);
+            }
             Dbl::$nerrors = $old_nerrors;
         }
         if ($this->sversion < 200) {
@@ -363,13 +365,6 @@ class Conf {
         $this->settings["extrev_view"] = $this->settings["extrev_view"] ?? 0;
         $this->settings["sub_blind"] = $this->settings["sub_blind"] ?? self::BLIND_ALWAYS;
         $this->settings["rev_blind"] = $this->settings["rev_blind"] ?? self::BLIND_ALWAYS;
-        if (!isset($this->settings["seedec"])) {
-            if ($this->settings["au_seedec"] ?? null) {
-                $this->settings["seedec"] = self::SEEDEC_ALL;
-            } else if ($this->settings["rev_seedec"] ?? null) {
-                $this->settings["seedec"] = self::SEEDEC_REV;
-            }
-        }
         if (($this->settings["pc_seeallrev"] ?? null) === 2) {
             $this->settings["pc_seeblindrev"] = 1;
             $this->settings["pc_seeallrev"] = self::PCSEEREV_YES;
@@ -435,7 +430,7 @@ class Conf {
 
         // digested settings
         $au_seerev = $this->settings["au_seerev"] ?? 0;
-        $this->_au_seerev = false;
+        $this->_au_seerev = null;
         if ($au_seerev === self::AUSEEREV_SEARCH) {
             if (($q = $this->settingTexts["au_seerev"] ?? null) !== null) {
                 $srch = new PaperSearch($this->root_user(), $q);
@@ -448,8 +443,22 @@ class Conf {
                 }
                 $this->_au_seerev = new Tag_SearchTerm($tsm);
             }
-        } else {
-            $this->_au_seerev = $au_seerev > 0;
+        } else if ($au_seerev > 0) {
+            $this->_au_seerev = new True_SearchTerm;
+        }
+        if ($this->_au_seerev instanceof False_SearchTerm) {
+            $this->_au_seerev = null;
+        }
+        $au_seedec = $this->settings["au_seedec"] ?? 0;
+        $this->_au_seedec = null;
+        if ($au_seedec === 1 && ($q = $this->settingTexts["au_seedec"] ?? null) !== null) {
+            $srch = new PaperSearch($this->root_user(), $q);
+            $this->_au_seedec = $srch->full_term();
+        } else if ($au_seedec > 0) {
+            $this->_au_seedec = new True_SearchTerm;
+        }
+        if ($this->_au_seedec instanceof False_SearchTerm) {
+            $this->_au_seedec = null;
         }
         $this->tag_seeall = ($this->settings["tag_seeall"] ?? 0) > 0;
         $this->ext_subreviews = $this->settings["pcrev_editdelegate"] ?? 0;
@@ -986,22 +995,27 @@ class Conf {
     }
 
     /** @return ?S3Client */
-    function s3_docstore() {
+    function s3_client() {
         if ($this->_s3_client === false) {
-            if ($this->setting_data("s3_bucket")) {
-                $opts = [
+            if (($bucket = $this->setting_data("s3_bucket"))) {
+                $this->_s3_client = S3Client::make([
                     "key" => $this->setting_data("s3_key"),
                     "secret" => $this->setting_data("s3_secret"),
-                    "bucket" => $this->setting_data("s3_bucket"),
+                    "bucket" => $bucket,
                     "setting_cache" => $this,
                     "setting_cache_prefix" => "__s3"
-                ];
-                $this->_s3_client = S3Client::make($opts);
+                ]);
             } else {
                 $this->_s3_client = null;
             }
         }
         return $this->_s3_client;
+    }
+
+    /** @return ?S3Client
+     * @deprecated */
+    function s3_docstore() {
+        return $this->s3_client();
     }
 
 
@@ -2985,6 +2999,7 @@ class Conf {
         $this->_update_automatic_tags_csv($csv);
     }
 
+    /** @param list<string> $csv */
     function _update_automatic_tags_csv($csv) {
         if (count($csv) > 1) {
             $this->_updating_automatic_tags = true;
@@ -3019,9 +3034,6 @@ class Conf {
     /** @param array<string,true> $caches */
     function invalidate_caches($caches) {
         if (!self::$no_invalidate_caches) {
-            if (is_string($caches)) {
-                $caches = [$caches => true];
-            }
             if (!$caches || isset($caches["pc"]) || isset($caches["users"])) {
                 $this->_pc_members_cache = $this->_pc_tags_cache = $this->_pc_user_cache = $this->_pc_chairs_cache = null;
                 $this->_user_cache = $this->_user_email_cache = null;
@@ -3421,12 +3433,12 @@ class Conf {
         return $this->any_response_open || $this->_au_seerev;
     }
     /** @return bool */
-    function time_all_author_view_decision() {
-        return $this->setting("seedec") == self::SEEDEC_ALL;
+    function time_some_author_view_decision() {
+        return $this->_au_seedec !== null;
     }
     /** @return bool */
-    function time_some_author_view_decision() {
-        return $this->setting("seedec") == self::SEEDEC_ALL;
+    function time_all_author_view_decision() {
+        return $this->_au_seedec instanceof True_SearchTerm;
     }
     /** @return bool */
     function time_review_open() {
@@ -3490,23 +3502,14 @@ class Conf {
             return false;
         }
     }
-    /** @return bool */
-    function time_pc_view_decision($conflicted) {
-        $s = $this->setting("seedec");
-        if ($conflicted) {
-            return $s == self::SEEDEC_ALL || $s == self::SEEDEC_REV;
-        } else {
-            return $s >= self::SEEDEC_REV;
-        }
-    }
-    /** @return bool */
-    function time_reviewer_view_decision() {
-        return $this->setting("seedec") >= self::SEEDEC_REV;
-    }
-    /** @return bool */
-    function time_reviewer_view_accepted_authors() {
-        return $this->setting("seedec") == self::SEEDEC_ALL
-            && !$this->setting("seedec_hideau");
+    /** @param bool $pc
+     * @return bool */
+    function time_some_reviewer_view_authors($pc) {
+        return $this->submission_blindness() !== self::BLIND_ALWAYS
+            || (($pc || $this->setting("extrev_view") > 0)
+                && $this->has_any_accepted()
+                && $this->time_some_author_view_decision()
+                && !$this->setting("seedec_hideau"));
     }
 
     /** @return int */
@@ -5747,7 +5750,8 @@ class Conf {
         return $this->_mail_keyword_map;
     }
 
-    /** @return list<object> */
+    /** @param string $name
+     * @return list<object> */
     function mail_keywords($name) {
         $uf = $this->xt_search_name($this->mail_keyword_map(), $name, null);
         $ufs = $this->xt_search_factories($this->_mail_keyword_factories, $name, null, $uf);

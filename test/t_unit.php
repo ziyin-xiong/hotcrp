@@ -364,12 +364,28 @@ class Unit_Tester {
         xassert_eqq(JsonParser::path_push("\$[0]", "\n"), "\$[0][\"\\n\"]");
     }
 
-    function test_json_object_replace() {
-        xassert_eqq(json_encode(json_object_replace(null, ["a" => 1])), '{"a":1}');
-        xassert_eqq(json_encode(json_object_replace(["a" => 1], ["a" => 2])), '{"a":2}');
-        xassert_eqq(json_encode(json_object_replace((object) ["a" => 1], ["a" => 2])), '{"a":2}');
-        xassert_eqq(json_encode(json_object_replace((object) ["a" => 1], ["a" => null])), '{}');
-        xassert_eqq(json_encode(json_object_replace((object) ["a" => 1], ["a" => null], true)), 'null');
+    function test_object_replace_recursive() {
+        $obj = (object) [];
+        object_replace_recursive($obj, ["a" => 1]);
+        xassert_eqq(json_encode($obj), '{"a":1}');
+
+        object_replace_recursive($obj, (object) ["a" => 2]);
+        xassert_eqq(json_encode($obj), '{"a":2}');
+
+        $obj->a = 1;
+        object_replace_recursive($obj, ["a" => 2]);
+        xassert_eqq(json_encode($obj), '{"a":2}');
+
+        $obj->a = 1;
+        object_replace_recursive($obj, ["a" => null]);
+        xassert_eqq(json_encode($obj), '{}');
+    }
+
+    function test_json_object_replace_recursive() {
+        xassert_eqq(json_object_replace_recursive(null, ["a" => 1]), '{"a":1}');
+        xassert_eqq(json_object_replace_recursive('{"a":1}', (object) ["a" => 2]), '{"a":2}');
+        xassert_eqq(json_object_replace_recursive('{"a":1}', ["a" => 2]), '{"a":2}');
+        xassert_eqq(json_object_replace_recursive('{"a":1}', ["a" => null]), null);
     }
 
     function test_json_encode_browser_db() {
@@ -985,6 +1001,12 @@ class Unit_Tester {
         xassert_eqq(str_list_lower_bound("ad", ["0", "1", "2", "ab", "ac", "ad"]), 5);
         xassert_eqq(str_list_lower_bound("ad1", ["0", "1", "2", "ab", "ac", "ad"]), 6);
         xassert_eqq(str_list_lower_bound("af", ["0", "1", "2", "ab", "ac", "ad"]), 6);
+    }
+
+    function test_glob_to_regex() {
+        xassert_eqq(glob_to_regex("*foo{a,b}?"), ".*foo\\{a,b\\}.");
+        xassert_eqq(glob_to_regex("*foo{a,b}?|", GLOB_BRACE), ".*foo(?:a|b).\\|");
+        xassert_eqq(glob_to_regex("x.txt", GLOB_BRACE), "x\\.txt");
     }
 
     function test_topic_set() {

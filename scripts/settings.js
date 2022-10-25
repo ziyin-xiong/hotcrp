@@ -3,8 +3,12 @@
 
 "use strict";
 
-handle_ui.on("js-settings-au-seerev-search", function () {
-    $("#review_visibility_author_3").click(); // AUSEEREV_SEARCH
+handle_ui.on("js-settings-radioitem-click", function () {
+    let e = this.closest(".settings-radioitem"), re;
+    if (e && (re = e.firstElementChild)
+        && (re = re.firstElementChild)
+        && re.tagName === "INPUT")
+        re.click();
 });
 
 handle_ui.on("js-settings-sub-nopapers", function () {
@@ -90,23 +94,43 @@ function settings_disable_children(e) {
     });
 }
 
+function settings_field_order(parentid) {
+    var i = 0, curorder, defaultorder, orde, n, pos,
+        form = document.getElementById("settingsform"),
+        c = document.getElementById(parentid),
+        moveup = null, movedown = null;
+    for (n = c.firstChild; n; n = n.nextSibling) {
+        orde = form.elements[n.id + "/order"];
+        if (hasClass(n, "deleted")) {
+            orde.value = 0;
+            continue;
+        }
+        ++i;
+        moveup = n.querySelector(".moveup");
+        moveup.disabled = movedown === null;
+        movedown = n.querySelector(".movedown");
+        movedown.disabled = false;
+        curorder = +orde.value;
+        defaultorder = +input_default_value(orde);
+        if (defaultorder > 0 && defaultorder < curorder) {
+            curorder = defaultorder;
+        }
+        if (i === 1 || curorder !== curorder || curorder < i) {
+            curorder = i;
+        }
+        orde.value = i = curorder;
+    }
+    movedown && (movedown.disabled = true);
+    form_highlight(form);
+}
+
 
 // BEGIN SUBMISSION FIELD SETTINGS
 (function () {
 var type_properties, type_name_placeholders;
 
 function settings_sf_order() {
-    var i = 0, n, pos,
-        form = document.getElementById("settingsform"),
-        c = document.getElementById("settings-sform");
-    $(c).find(".moveup, .movedown").prop("disabled", false);
-    $(c).find(".settings-sf:first-child .moveup").prop("disabled", true);
-    $(c).find(".settings-sf:last-child .movedown").prop("disabled", true);
-    for (n = c.firstChild; n; n = n.nextSibling) {
-        pos = hasClass(n, "deleted") ? 0 : ++i;
-        form.elements[n.id + "/order"].value = pos;
-    }
-    form_highlight("#settingsform");
+    settings_field_order("settings-sform");
 }
 
 handle_ui.on("js-settings-sf-type", function () {
@@ -144,6 +168,7 @@ handle_ui.on("js-settings-sf-move", function (evt) {
         settings_delete(sf, msg);
         foldup.call(sf, evt, {n: 2, f: false});
     }
+    tooltip.erase(this);
     settings_sf_order();
 });
 
@@ -415,17 +440,7 @@ function values_to_text(fld) {
 }
 
 function rf_order() {
-    var i = 0, n, pos,
-        form = document.getElementById("settingsform"),
-        c = document.getElementById("settings-rform");
-    $(c).find(".moveup, .movedown").prop("disabled", false);
-    $(c).find(".settings-rf:first-child .moveup").prop("disabled", true);
-    $(c).find(".settings-rf:last-child .movedown").prop("disabled", true);
-    for (n = c.firstChild; n; n = n.nextSibling) {
-        pos = hasClass(n, "deleted") ? 0 : ++i;
-        form.elements[n.id + "/order"].value = pos;
-    }
-    form_highlight("#settingsform");
+    settings_field_order("settings-rform");
 }
 
 function rf_fill_control(form, name, value, setdefault) {
@@ -582,15 +597,13 @@ function rf_render_view(fld) {
 }
 
 function rf_move() {
-    var isup = $(this).hasClass("moveup"),
-        $field = $(this).closest(".settings-rf").detach(),
-        pos = $field.find(".is-order").val() | 0,
-        rf = $$("settings-rform"), n, i;
-    for (i = 1, n = rf.firstChild;
-         n && i < (isup ? pos - 1 : pos + 1);
-         ++i, n = n.nextSibling) {
+    var rf = this.closest(".settings-rf");
+    if (hasClass(this, "moveup") && rf.previousSibling) {
+        rf.parentNode.insertBefore(rf, rf.previousSibling);
+    } else if (hasClass(this, "movedown") && rf.nextSibling) {
+        rf.parentNode.insertBefore(rf, rf.nextSibling.nextSibling);
     }
-    rf.insertBefore($field[0], n);
+    tooltip.erase(this);
     rf_order();
 }
 
@@ -810,9 +823,9 @@ function is_text_or_inline(node) {
         || (node.tagName !== "BR" && node.childWidth === 0 && node.childHeight === 0);
 }
 
-// Test if `ch` is a character code for JSON whitespace
+// Test if `ch` is a character code for JSON whitespace **or NBSP**
 function isspace(ch) {
-    return ch === 9 || ch === 10 || ch === 13 || ch === 32;
+    return ch === 9 || ch === 10 || ch === 13 || ch === 32 || ch === 160;
 }
 
 // Test if `ch` is a character code for a JSON delimiter ([\s",:\[\]\{\}])
@@ -966,7 +979,9 @@ function make_content_editable(mainel) {
             var next, nl;
             while (ch) {
                 next = ch.nextSibling;
-                if (ch.nodeType === 3 && (nl = ch.data.indexOf("\n")) !== -1) {
+                if (ch.nodeType !== 1 && ch.nodeType !== 3) {
+                    ch.remove();
+                } else if (ch.nodeType === 3 && (nl = ch.data.indexOf("\n")) !== -1) {
                     if (nl !== ch.length - 1) {
                         next = ch.splitText(nl + 1);
                         nsel.transfer_text(next, ch, nl + 1, -nl - 1);
@@ -998,22 +1013,23 @@ function make_content_editable(mainel) {
             }
         }
 
-        ch = firstel || mainel.firstChild;
+        ch = firstel = firstel || mainel.firstChild;
         while (ch && ch !== lastel) {
             if (ch.nodeType !== 1
                 || ch.tagName !== "DIV"
                 || ch.hasAttribute("style")) {
-                var line = document.createElement("div"), first = true;
+                var line = document.createElement("div"),
+                    line1 = ch === firstel, child1 = true;
                 mainel.insertBefore(line, ch);
-                while (ch && (first || is_text_or_inline(ch))) {
+                while (ch && (child1 || is_text_or_inline(ch))) {
                     line.appendChild(ch);
                     ch = line.nextSibling;
-                    first = false;
+                    child1 = false;
                 }
                 if (ch && is_br(ch)) {
                     line.firstChild ? ch.remove() : line.appendChild(ch);
                 }
-                ch === firstel && (firstel = line);
+                line1 && (firstel = line);
                 ch = line;
             }
             next = ch.nextSibling;
@@ -1033,7 +1049,10 @@ function make_content_editable(mainel) {
         return texts.length;
     }
 
-    function lineno(node) {
+    function lineno(node, offset) {
+        if (node === mainel) {
+            return offset;
+        }
         while (node && node.parentElement !== mainel) {
             node = node.parentElement;
         }
@@ -1214,8 +1233,8 @@ function make_content_editable(mainel) {
     function lp2p(ln, lp) {
         posd.length > ln || make_posd();
         if (ln >= texts.length) {
-            ln = texts.length;
-            lp = 0;
+            ln = texts.length - 1;
+            lp = ln >= 0 ? texts[ln].length : 0;
         }
         let lsp = 0;
         for (let a = 1, y = ln; y !== 0; a <<= 1) {
@@ -1763,7 +1782,7 @@ function jsonhl_line(lineel, st, nsel) {
 
 
     while (true) {
-        while (p !== n && isspace((ch = t.charCodeAt(p)))) {
+        while (p !== n && (ch = t.charCodeAt(p), isspace(ch))) {
             ++p;
         }
         if (p === n) {
@@ -2176,8 +2195,8 @@ function make_json_validate() {
     function event_range(evt) {
         var i, r = null, ranges = evt.getTargetRanges();
         for (i = 0; i !== ranges.length; ++i) {
-            var ln0 = maince.lineno(ranges[i].startContainer),
-                ln1 = maince.lineno(ranges[i].endContainer);
+            var ln0 = maince.lineno(ranges[i].startContainer, ranges[i].startOffset),
+                ln1 = maince.lineno(ranges[i].endContainer, ranges[i].endOffset);
             r = union_range(r, [ln0, ln1 < 0 ? -1 : ln1 + 1]);
         }
         return r;
@@ -2598,12 +2617,25 @@ function settings_path_jump(el, path, use_key) {
     }
 }
 
+function json_settings_presubmit(settingse) {
+    return function () {
+        let lines = [], e;
+        for (let ch = settingse.firstChild; ch; ch = ch.nextSibling) {
+            lines.push(ch.textContent, "\n");
+        }
+        e = this.elements["json_settings:copy"];
+        e || this.appendChild((e = hidden_input("json_settings:copy", "")));
+        e.value = lines.join("");
+    };
+}
+
 function initialize_json_settings() {
     $(".need-settings-json").each(function () {
         make_json_validate.call(this);
         this.addEventListener("jsonpathchange", settings_jsonpathchange);
         removeClass(this, "need-settings-json");
         addClass(this, "js-settings-json");
+        this.closest("form").addEventListener("submit", json_settings_presubmit(this));
     });
 }
 
@@ -2645,6 +2677,9 @@ handle_ui.on("dragstart.js-settings-drag", function (evt) {
 function settings_drag(draghandle, draggable, group, evt) {
     var pos, posy0, posy1, contains = 0, sep, changed = false, scrollt = null;
     function drag(evt) {
+        evt.preventDefault();
+        evt.dropEffect = "move";
+
         if (contains === 0) {
             sep && sep.remove();
             pos = posy0 = posy1 = sep = null;
@@ -2705,10 +2740,6 @@ function settings_drag(draghandle, draggable, group, evt) {
         toggleClass(draggable, "drag-would-move", changed);
         toggleClass(draggable, "drag-would-keep", !changed);
     }
-    function dragover(evt) {
-        evt.preventDefault();
-        evt.dropEffect = "move";
-    }
     function drop() {
         if (contains !== 0) {
             changed && group.insertBefore(draggable, sep);
@@ -2735,12 +2766,13 @@ function settings_drag(draghandle, draggable, group, evt) {
         removeClass(draggable, "dragging");
         removeClass(draggable, "drag-would-move");
         removeClass(draggable, "drag-would-keep");
-        draghandle.removeEventListener("drag", drag);
+        window.removeEventListener("dragover", drag);
         draghandle.removeEventListener("dragend", dragend);
         group.removeEventListener("drop", drop);
-        group.removeEventListener("dragover", dragover);
         group.removeEventListener("dragenter", dragenter);
         group.removeEventListener("dragleave", dragenter);
+        window.removeEventListener("scroll", scroll);
+        window.removeEventListener("resize", scroll);
     }
     function dragenter(evt) {
         if (group.contains(evt.target)) {
@@ -2757,10 +2789,9 @@ function settings_drag(draghandle, draggable, group, evt) {
 
     dragstart(evt);
     evt = null;
-    draghandle.addEventListener("drag", drag);
+    window.addEventListener("dragover", drag);
     draghandle.addEventListener("dragend", dragend);
     group.addEventListener("drop", drop);
-    group.addEventListener("dragover", dragover);
     group.addEventListener("dragenter", dragenter);
     group.addEventListener("dragleave", dragenter);
     window.addEventListener("scroll", scroll);

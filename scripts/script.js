@@ -1606,7 +1606,7 @@ function input_default_value(elt) {
 }
 
 function input_set_default_value(elt, val) {
-    var cb = input_is_checkboxlike(elt), upd, j;
+    var cb = input_is_checkboxlike(elt);
     if (cb) {
         elt.removeAttribute("data-default-checked");
         // set dirty checkedness flag:
@@ -1617,18 +1617,6 @@ function input_set_default_value(elt, val) {
         // set dirty value flag:
         elt.value = elt.value; // eslint-disable-line no-self-assign
         elt.defaultValue = val;
-    }
-    // 2021 Chrome workaround
-    if (elt.name && elt.form && (upd = elt.form.elements.____updates____)) {
-        try {
-            j = parse_json(upd.value || "{}");
-        } catch (e) {
-            j = {};
-        }
-        if (elt.type === "radio" && !elt.checked)
-            val = elt.form.elements[elt.name].value;
-        j[elt.name] = val || "";
-        upd.value = JSON.stringify(j);
     }
 }
 
@@ -1680,30 +1668,6 @@ function hidden_input(name, value, attr) {
     }
     return input;
 }
-
-$(function () {
-    $("form").each(function () {
-        var upd = this.elements.____updates____, j, n, e, e2, i;
-        if (upd && upd.value) {
-            try {
-                j = parse_json(upd.value);
-                for (n in j)
-                    if ((e = this.elements[n])) {
-                        if (e.type === "checkbox")
-                            e.defaultChecked = e.value === j[n];
-                        else if (e instanceof RadioNodeList) {
-                            for (i = 0; i !== e.length; ++i) {
-                                e2 = e.item(i);
-                                e2.defaultChecked = e2.value === j[n];
-                            }
-                        } else
-                            e.defaultValue = j[n];
-                    }
-            } catch (e) {
-            }
-        }
-    });
-});
 
 function hiliter_children(form) {
     form = $(form)[0];
@@ -3412,7 +3376,7 @@ var hotcrp_load = (function ($) {
     }
     function show_usertimes() {
         $(".need-usertime").each(function () {
-            var d = new Date(+this.getAttribute("data-time") * 1000), s, n, m;
+            var d = new Date(+this.getAttribute("data-time") * 1000), m;
             if ((m = this.textContent.match(/(\d+) (\S+) (\d{4})/))) {
                 if (+m[3] !== d.getFullYear())
                     append_span(this, " (%#e %b %Y %#q your time)", d);
@@ -3449,10 +3413,9 @@ function fold_storage() {
         $(".need-fold-storage").each(fold_storage);
     } else {
         removeClass(this, "need-fold-storage");
-        var sn = this.getAttribute("data-fold-storage"), smap, k, flip = false;
-        if (sn.charAt(0) === "-") {
+        var sn = this.getAttribute("data-fold-storage"), smap, k;
+        if (sn.charAt(0) === "-") { // XXX backward compat
             sn = sn.substring(1);
-            flip = true;
         }
         if (sn.charAt(0) === "{" || sn.charAt(0) === "[") {
             smap = parse_json(sn) || {};
@@ -3547,17 +3510,18 @@ function foldup(evt, opts) {
     }
     if (!("n" in opts)
         && e.hasAttribute("data-fold-target")
-        && (m = e.getAttribute("data-fold-target").match(/^(\D[^#]*$|.*(?=#)|)#?(\d*)([cou]?)$/))) {
+        && (m = e.getAttribute("data-fold-target").match(/^(\D[^#]*$|.*(?=#)|)#?(\d*)([couU]?)$/))) {
         if (m[1] !== "") {
             e = document.getElementById(m[1]);
         }
         opts.n = parseInt(m[2]) || 0;
         if (!("f" in opts) && m[3] !== "") {
-            if (m[3] === "u" && this.tagName === "INPUT" && this.type === "checkbox") {
-                opts.f = this.checked;
-            } else {
-                opts.f = m[3] === "c";
+            if (this.tagName === "INPUT"
+                && input_is_checkboxlike(this)
+                && (this.checked ? m[3] === "u" : m[3] === "U")) {
+                m[3] = "c";
             }
+            opts.f = m[3] === "c";
         }
     }
     var foldname = "fold" + (opts.n || "");
