@@ -190,21 +190,14 @@ class ReviewForm implements JsonSerializable {
         return $rj;
     }
 
-
     private function print_web_edit(PaperInfo $prow, ReviewInfo $rrow, Contact $contact,
                                     ReviewValues $rvalues = null) {
         $fi = $this->conf->format_info(null);
-        echo '<div class="rve">';
-        foreach ($rrow->viewable_fields($contact) as $f) {
-            $fval = $rrow->fields[$f->order];
-            if ($rvalues && isset($rvalues->req[$f->short_id])) {
-                $reqstr = $rvalues->req[$f->short_id];
-            } else {
-                $reqstr = $f->value_unparse($fval);
-            }
-            $f->print_web_edit($fval, $reqstr, ["format" => $fi, "rvalues" => $rvalues]);
+        echo $this->conf->make_css_link(["href" => "./stylesheets/slider.css"]), "\n";  // 连接到 slider.css
+        foreach ($rrow->viewable_fields($contact) as $f) {  // 已设置abstract field可见度是"au"
+            $generate_form = $f->description;  // string
+            echo '<div id="display"></div><script src="./scripts/autogen.js"></script><script src="./scripts/qtest.js"></script><script type="text/javascript">generate_form("'.$generate_form.'",document.getElementById("display"));</script>';  // print html
         }
-        echo "</div>\n";
     }
 
     /** @return int */
@@ -1250,7 +1243,8 @@ class ReviewValues extends MessageSet {
 
         // actually check review and save
         if ($this->check($rrow)) {
-            return $this->do_save($user, $prow, $rrow);
+            // return $this->do_save($user, $prow, $rrow);
+            return $this->do_save_new($user, $prow, $rrow);
         } else {
             if ($new_rrid) {
                 $user->assign_review($prow->paperId, $reviewer->contactId, 0);
@@ -1461,6 +1455,375 @@ class ReviewValues extends MessageSet {
                     $fval = $old_fval;
                 }
                 $fval_diffs = $fval !== $old_fval;
+            }
+            if ($fval_diffs) {
+                $diffinfo->add_field($f, $fval);
+            }
+            if ($fval_diffs || !$rrow->reviewId) {
+                if ($f->main_storage) {
+                    $qf[] = "{$f->main_storage}=?";
+                    $qv[] = $fval;
+                }
+                if ($f->json_storage) {
+                    $fchanges[$f->is_sfield ? 0 : 1][] = [$f, $fval];
+                }
+            }
+            if ($f->include_word_count()) {
+                $wc += count_words($fval);
+            }
+            if (!$f->value_empty($fval)) {
+                $view_score = max($view_score, $f->view_score);
+            }
+        }
+        if (!empty($fchanges[0])) {
+            $sfields = $rrow->fstorage(true);
+            foreach ($fchanges[0] as $fv) {
+                if ($fv[1] != 0) {
+                    $sfields[$fv[0]->json_storage] = $fv[1];
+                } else {
+                    unset($sfields[$fv[0]->json_storage]);
+                }
+            }
+            $qf[] = "sfields=?";
+            $qv[] = $sfields ? json_encode_db($sfields) : null;
+        }
+        if (!empty($fchanges[1])) {
+            $tfields = $rrow->fstorage(false);
+            foreach ($fchanges[1] as $fv) {
+                if ($fv[1] !== "") {
+                    $tfields[$fv[0]->json_storage] = $fv[1];
+                } else {
+                    unset($tfields[$fv[0]->json_storage]);
+                }
+            }
+            $qf[] = "tfields=?";
+            $qv[] = $tfields ? json_encode_db($tfields) : null;
+        }
+
+        // get the current time
+        $now = max(time(), $rrow->reviewModified + 1, $rrow->reviewTime + 1);
+        if ($this->conf->sversion >= 267) {
+            $qf[] = "reviewTime=?";
+            $qv[] = $now;
+        }
+
+        if (($newstatus >= ReviewInfo::RS_COMPLETED)
+            !== ($oldstatus >= ReviewInfo::RS_COMPLETED)) {
+            $qf[] = "reviewSubmitted=?";
+            $qv[] = $newstatus >= ReviewInfo::RS_COMPLETED ? $now : null;
+            // $diffinfo->view_score should represent transition to submitted
+            if ($rrow->reviewId && $newstatus >= ReviewInfo::RS_COMPLETED) {
+                $diffinfo->add_view_score($this->rf->nonempty_view_score($rrow));
+            }
+        }
+        if ($newstatus >= ReviewInfo::RS_ADOPTED) {
+            $qf[] = "reviewNeedsSubmit=?";
+            $qv[] = 0;
+        }
+        if ($newstatus === ReviewInfo::RS_DELIVERED && $oldstatus <= $newstatus) {
+            $qf[] = "timeApprovalRequested=?";
+            $qv[] = $now;
+        } else if ($newstatus === ReviewInfo::RS_ADOPTED && $oldstatus !== $newstatus) {
+            $qf[] = "timeApprovalRequested=?";
+            $qv[] = -$now;
+        }
+
+        // check whether used a review token
+        $usedReviewToken = $user->active_review_token_for($prow, $rrow);
+
+        // blind? reviewer type? edit version?
+        $reviewBlind = $this->conf->is_review_blind(!!($this->req["blind"] ?? null));
+        if (!$rrow->reviewId
+            || $reviewBlind != $rrow->reviewBlind) {
+            $diffinfo->add_view_score(VIEWSCORE_ADMINONLY);
+            $qf[] = "reviewBlind=?";
+            $qv[] = $reviewBlind ? 1 : 0;
+        }
+        if ($rrow->reviewId
+            && $rrow->reviewType == REVIEW_EXTERNAL
+            && $user->contactId == $rrow->contactId
+            && $user->isPC
+            && !$usedReviewToken) {
+            $qf[] = "reviewType=?";
+            $qv[] = REVIEW_PC;
+        }
+        if ($rrow->reviewId
+            && $diffinfo->nonempty()
+            && isset($this->req["version"])
+            && (is_int($this->req["version"]) || ctype_digit($this->req["version"]))
+            && $this->req["version"] > ($rrow->reviewEditVersion ?? 0)) {
+            $qf[] = "reviewEditVersion=?";
+            $qv[] = $this->req["version"] + 0;
+        }
+        if ($diffinfo->nonempty()) {
+            $qf[] = "reviewWordCount=?";
+            $qv[] = $wc;
+        }
+
+        // notification
+        if ($diffinfo->nonempty()) {
+            $qf[] = "reviewModified=?";
+            $qv[] = $now;
+            $newstatus = max($newstatus, ReviewInfo::RS_DRAFTED);
+        }
+        $notification_bound = $now - ReviewForm::NOTIFICATION_DELAY;
+        $newsubmit = $newstatus >= ReviewInfo::RS_COMPLETED
+            && $oldstatus < ReviewInfo::RS_COMPLETED;
+        if (!$rrow->reviewId || $diffinfo->nonempty()) {
+            $qf[] = "reviewViewScore=?";
+            $qv[] = $view_score;
+            // XXX distinction between VIEWSCORE_AUTHOR/VIEWSCORE_AUTHORDEC?
+            if ($diffinfo->view_score >= VIEWSCORE_AUTHOR) {
+                $qf[] = "reviewAuthorModified=?";
+                $qv[] = $now;
+            } else if (!$rrow->reviewAuthorModified
+                       && $rrow->reviewModified
+                       && $this->rf->nonempty_view_score($rrow) >= VIEWSCORE_AUTHOR) {
+                $qf[] = "reviewAuthorModified=?";
+                $qv[] = $rrow->reviewModified;
+            }
+            // do not notify on updates within 3 hours, except fresh submits
+            if ($newstatus >= ReviewInfo::RS_COMPLETED
+                && $diffinfo->view_score > VIEWSCORE_ADMINONLY
+                && !$this->no_notify) {
+                if (!$rrow->reviewNotified
+                    || $rrow->reviewNotified < $notification_bound
+                    || $newsubmit) {
+                    $qf[] = "reviewNotified=?";
+                    $qv[] = $now;
+                    $diffinfo->notify = true;
+                }
+                if ((!$rrow->reviewAuthorNotified
+                     || $rrow->reviewAuthorNotified < $notification_bound)
+                    && $diffinfo->view_score >= VIEWSCORE_AUTHOR
+                    && $prow->can_author_view_submitted_review()) {
+                    $qf[] = "reviewAuthorNotified=?";
+                    $qv[] = $now;
+                    $diffinfo->notify_author = true;
+                }
+            }
+        }
+
+        // potentially assign review ordinal (requires table locking since
+        // mySQL is stupid)
+        $locked = $newordinal = false;
+        if ((!$rrow->reviewId
+             && $newsubmit
+             && $diffinfo->view_score >= VIEWSCORE_AUTHORDEC)
+            || ($rrow->reviewId
+                && !$rrow->reviewOrdinal
+                && ($newsubmit || $rrow->reviewStatus >= ReviewInfo::RS_COMPLETED)
+                && ($diffinfo->view_score >= VIEWSCORE_AUTHORDEC
+                    || $this->rf->nonempty_view_score($rrow) >= VIEWSCORE_AUTHORDEC))) {
+            $result = $this->conf->qe_raw("lock tables PaperReview write");
+            if (Dbl::is_error($result)) {
+                return false;
+            }
+            Dbl::free($result);
+            $locked = true;
+            $max_ordinal = $this->conf->fetch_ivalue("select coalesce(max(reviewOrdinal), 0) from PaperReview where paperId=? group by paperId", $prow->paperId);
+            // NB `coalesce(reviewOrdinal,0)` is not necessary in modern schemas
+            $qf[] = "reviewOrdinal=if(coalesce(reviewOrdinal,0)=0,?,reviewOrdinal)";
+            $qv[] = (int) $max_ordinal + 1;
+            $newordinal = true;
+        }
+        if ($newordinal
+            || (($newsubmit
+                 || ($newstatus >= ReviewInfo::RS_ADOPTED && $oldstatus < ReviewInfo::RS_ADOPTED))
+                && !$rrow->timeDisplayed)) {
+            $qf[] = "timeDisplayed=?";
+            $qv[] = $now;
+        }
+
+        // actually affect database
+        if ($rrow->reviewId) {
+            if (!empty($qf)) {
+                array_push($qv, $prow->paperId, $rrow->reviewId);
+                $result = $this->conf->qe_apply("update PaperReview set " . join(", ", $qf) . " where paperId=? and reviewId=?", $qv);
+            } else {
+                $result = true;
+            }
+            $reviewId = $rrow->reviewId;
+            $contactId = $rrow->contactId;
+        } else {
+            array_unshift($qf, "paperId=?", "contactId=?", "reviewType=?", "requestedBy=?", "reviewRound=?");
+            array_unshift($qv, $prow->paperId, $user->contactId, REVIEW_PC, $user->contactId, $this->conf->assignment_round(false));
+            $result = $this->conf->qe_apply("insert into PaperReview set " . join(", ", $qf), $qv);
+            $reviewId = $result ? $result->insert_id : null;
+            $contactId = $user->contactId;
+        }
+
+        // unlock tables even if problem
+        if ($locked) {
+            $this->conf->qe_raw("unlock tables");
+        }
+        if (Dbl::is_error($result)) {
+            return false;
+        }
+
+        // update caches
+        $prow->update_rights();
+
+        // look up review ID
+        if (!$reviewId) {
+            return false;
+        }
+        $this->req["reviewId"] = $reviewId;
+        $this->reviewId = $reviewId;
+        $new_rrow = $prow->fresh_review_by_id($reviewId);
+        if ($new_rrow->reviewStatus !== $newstatus) {
+            error_log("{$this->conf->dbname}: review #{$prow->paperId}/{$new_rrow->reviewId} saved reviewStatus {$new_rrow->reviewStatus} (expected {$newstatus})");
+        }
+        assert($new_rrow->reviewStatus === $newstatus);
+        $this->review_ordinal_id = $new_rrow->unparse_ordinal_id();
+
+        // log updates -- but not if review token is used
+        if (!$usedReviewToken
+            && $diffinfo->nonempty()) {
+            $log_actions = [];
+            if (!$rrow->reviewId) {
+                $log_actions[] = "started";
+            }
+            if ($newsubmit) {
+                $log_actions[] = "submitted";
+            }
+            if ($rrow->reviewId && !$newsubmit && $diffinfo->fields()) {
+                $log_actions[] = "edited";
+            }
+            $log_fields = [];
+            foreach ($diffinfo->fields() as $f) {
+                if ($f instanceof Score_ReviewField) {
+                    $log_fields[] = $f->search_keyword() . ":" . $f->value_unparse($new_rrow->fields[$f->order]);
+                } else {
+                    $log_fields[] = $f->search_keyword();
+                }
+            }
+            if (($wc = $this->rf->full_word_count($new_rrow)) !== null) {
+                $log_fields[] = plural($wc, "word");
+            }
+            if ($newstatus < ReviewInfo::RS_DELIVERED) {
+                $statusword = " draft";
+            } else if ($newstatus === ReviewInfo::RS_DELIVERED) {
+                $statusword = " approvable";
+            } else if ($newstatus === ReviewInfo::RS_ADOPTED) {
+                $statusword = " adopted";
+            } else {
+                $statusword = "";
+            }
+            $user->log_activity_for($new_rrow->contactId, "Review $reviewId "
+                . join(", ", $log_actions)
+                . $statusword
+                . (empty($log_fields) ? "" : ": ")
+                . join(", ", $log_fields), $prow);
+        }
+
+        if ($this->conf->sversion >= 269) {
+            $diffinfo->save_history($new_rrow, $now);
+        }
+
+        // if external, forgive the requester from finishing their review
+        if ($new_rrow->reviewType < REVIEW_SECONDARY
+            && $new_rrow->requestedBy
+            && $newstatus >= ReviewInfo::RS_COMPLETED) {
+            $this->conf->q_raw("update PaperReview set reviewNeedsSubmit=0 where paperId=$prow->paperId and contactId={$new_rrow->requestedBy} and reviewType=" . REVIEW_SECONDARY . " and reviewSubmitted is null");
+        }
+
+        // notify automatic tags
+        $this->conf->update_automatic_tags($prow, "review");
+
+        // potentially email chair, reviewers, and authors
+        $reviewer = $user;
+        if ($contactId != $user->contactId) {
+            $reviewer = $this->conf->user_by_id($contactId, USER_SLICE);
+        }
+        $this->do_notify($prow, $new_rrow, $newstatus, $oldstatus, $diffinfo, $reviewer, $user);
+
+        // record what happened
+        $what = "#$prow->paperId";
+        if ($new_rrow->reviewOrdinal) {
+            $what .= unparse_latin_ordinal($new_rrow->reviewOrdinal);
+        }
+        if ($newsubmit) {
+            $this->submitted[] = $what;
+        } else if ($newstatus === ReviewInfo::RS_DELIVERED
+                   && $new_rrow->contactId === $user->contactId) {
+            $this->approval_requested[] = $what;
+        } else if ($newstatus === ReviewInfo::RS_ADOPTED
+                   && $oldstatus < $newstatus
+                   && $new_rrow->contactId !== $user->contactId) {
+            $this->approved[] = $what;
+        } else if ($diffinfo->nonempty()) {
+            if ($newstatus >= ReviewInfo::RS_ADOPTED) {
+                $this->updated[] = $what;
+            } else {
+                $this->saved_draft[] = $what;
+                $this->single_approval = +$new_rrow->timeApprovalRequested;
+            }
+        } else {
+            $this->unchanged[] = $what;
+            if ($newstatus < ReviewInfo::RS_ADOPTED) {
+                $this->unchanged_draft[] = $what;
+                $this->single_approval = +$new_rrow->timeApprovalRequested;
+            }
+        }
+        if ($diffinfo->notify_author) {
+            $this->author_notified[] = $what;
+        }
+
+        return true;
+    }
+
+    private function do_save_new(Contact $user, PaperInfo $prow, ReviewInfo $rrow) {
+        assert($this->paperId == $prow->paperId);
+        assert($rrow->paperId == $prow->paperId);
+
+        $oldstatus = $newstatus = $rrow->reviewStatus;
+        if (($this->req["ready"] ?? null)
+            && $rrow->reviewStatus < ReviewInfo::RS_COMPLETED) {
+            if (!$rrow->subject_to_approval()) {
+                $newstatus = ReviewInfo::RS_COMPLETED;
+            } else if (!$user->isPC) {
+                $newstatus = max(ReviewInfo::RS_DELIVERED, $oldstatus);
+            } else if ($this->req["adoptreview"] ?? null) {
+                $newstatus = ReviewInfo::RS_ADOPTED;
+            } else {
+                $newstatus = ReviewInfo::RS_COMPLETED;
+            }
+        }
+        $admin = $user->allow_administer($prow);
+
+        if (!$user->time_review($prow, $rrow)
+            && (!isset($this->req["override"]) || !$admin)) {
+            $this->rmsg(null, '<5>The <a href="' . $this->conf->hoturl("deadlines") . '">deadline</a> for entering this review has passed.', self::ERROR);
+            if ($admin) {
+                $this->rmsg(null, '<0>Select the “Override deadlines” checkbox and try again if you really want to override the deadline.', self::INFORM);
+            }
+            return false;
+        }
+
+        $qf = $qv = [];
+        $view_score = VIEWSCORE_EMPTY;
+        $diffinfo = new ReviewDiffInfo($prow, $rrow);
+        $fchanges = [[], []];
+        $wc = 0;
+        foreach ($this->rf->all_fields() as $f) {
+            if (!$f->test_exists($rrow)) {
+                continue;
+            }
+            list($old_fval, $fval) = $this->fvalues($f, $rrow);
+
+            if (file_exists("text.txt")){
+                $fval = file_get_contents("text.txt");  // 读取用户答卷答案 暂时储存在src文件夹下
+                unlink("text.txt");  // 删除本地文件记录
+            }
+
+            if ($fval === false) {  // 获取文件失败
+                $fval = $old_fval;
+            }
+            if (is_string($fval)) {
+                // Check for valid UTF-8; re-encode from Windows-1252 or Mac OS
+                $fval = cleannl(convert_to_utf8($fval));
+                $fval_diffs = $fval !== $old_fval && $fval !== cleannl($old_fval);
             }
             if ($fval_diffs) {
                 $diffinfo->add_field($f, $fval);

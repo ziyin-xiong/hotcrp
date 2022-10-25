@@ -142,10 +142,30 @@ class Settings_Page {
 
         $sp = new Settings_Page($sv, $user);
         $_SESSION["sg"] = $group = $qreq->group = $sp->choose_setting_group($qreq);
-
+        
         if ($sv->use_req()) {
             $sp->handle_update($qreq);
+        }  // 在这个函数中，执行保存setting信息的任务
+
+        $file_path = "../rfields_setting.txt";
+        if (file_exists($file_path)) {  // 不存在 就说明用户端没有上传文件 不需要更新review form
+            $content = file_get_contents($file_path);  // 将整个文件内容读入到一个字符串中
+            $rfs_j = '[{"id":"t01","name":"abstract field","order":1,"visibility":"au","description":"'.$content.'"}]';  // 只包含一个field的json
+            // setting信息存储入database
+            $sv_fields = SettingValues::make_request($sv->user, [
+                "has_rf" => 1,
+                "rf/1/id" => "t01",  // 或者"new"
+                "rf/1/name" => "abstract field",
+                // "rf/1/order" => "1",  // "1"还是1?
+                "rf/1/type" => "text",
+                "rf/1/description" => $content,
+                "rf/1/required" => "1",
+                "rf/1/visibility" => "au"
+            ]);  // qreq可能还需要一些信息 关于conf？
+            ($sv_fields->execute());  // 执行存储
+            unlink("rfields_setting.txt");  // 删除缓存文件
         }
+
         $sp->print($group, $qreq);
     }
 }

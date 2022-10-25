@@ -585,7 +585,7 @@ Note that complex HTML will not appear on offline review forms.</p></div>', 'set
         $all_open = false;
         echo Ht::button($icon, ["class" => "btn-licon ui js-settings-show-property need-tooltip" . ($all_open ? " btn-disabled" : ""), "aria-label" => $label, "data-property" => $property]);
     }
-
+/*
     static function print(SettingValues $sv) {
         echo Ht::hidden("has_rf", 1);
         $rfedit = $sv->editable("rf");
@@ -616,6 +616,50 @@ Note that complex HTML will not appear on offline review forms.</p></div>', 'set
             echo Ht::button("Add field", ["class" => "ui js-settings-rf-add"]);
         }
 
+        $sj = [];
+
+        $rfj = [];
+        foreach ($sv->conf->review_form()->all_fields() as $f) {
+            $rfj[] = $fj = $f->unparse_json(ReviewField::UJ_TEMPLATE);
+            $fj->search_keyword = $f->search_keyword();
+            $fj->configurable = $rfedit;
+        }
+        $sj["fields"] = $rfj;
+
+        $sj["samples"] = json_decode(file_get_contents(SiteLoader::find("etc/reviewformlibrary.json")));
+        $sj["message_list"] = $sv->message_list();
+
+        $req = [];
+        if ($sv->use_req()) {
+            foreach ($sv->req as $k => $v) {
+                if (str_starts_with($k, "rf/"))
+                    $req[$k] = $v;
+            }
+        }
+        $sj["req"] = $req;
+
+        Ht::stash_script("hotcrp.settings.review_form(" . json_encode_browser($sj) . ")");
+    }
+*/
+    static function print(SettingValues $sv) {
+        '''
+        
+        目前只提供上传完整review field list的唯一入口
+        
+        '''
+        echo Ht::hidden("has_rf", 1);
+        $rfedit = $sv->editable("rf");
+
+        echo '<div class="mb-4">';
+        if (!$sv->conf->time_some_author_view_review()) {
+            echo '<div class="feedback is-note">Authors cannot see reviews at the moment.</div>';
+        }
+        echo '</div>';
+        echo "<div id=\"settings-rform\"></div>";
+        
+        // upload文件的接口
+        echo '<form action="upload_rfs.php" method="post" enctype="multipart/form-data"><input type="file" name="file"/><input type="submit" value="Upload"></form>';
+        
         $sj = [];
 
         $rfj = [];
