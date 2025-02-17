@@ -1,11 +1,8 @@
 HotCRP Conference Review Software
 =================================
 
-HotCRP is awesome software for managing review processes, especially for
-academic conferences. It supports paper submission, review and comment
-management, rebuttals, and the PC meeting. Its main strengths are flexibility
-and ease of use in the review process, especially through smart paper search
-and tagging. It has been widely used in computer science conferences and for
+HotCRP is awesome software for managing conference review processes. It supports paper submission, review and comment
+management, rebuttals, and the PC meeting. It has been widely used in computer science conferences and for
 internal review processes at several large companies.
 
 Multitrack conferences with per-track deadlines should use other software.
