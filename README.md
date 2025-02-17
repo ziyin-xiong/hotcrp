@@ -5,8 +5,6 @@ HotCRP is awesome software for managing conference review processes. It supports
 management, rebuttals, and the PC meeting. It has been widely used in computer science conferences and for
 internal review processes at several large companies.
 
-Multitrack conferences with per-track deadlines should use other software.
-
 HotCRP is the open-source version of the software running on
 [hotcrp.com](https://hotcrp.com). If you want to run HotCRP without setting
 up your own server, use hotcrp.com. See its original [repo](https://github.com/kohler/hotcrp) for more detailed README.
