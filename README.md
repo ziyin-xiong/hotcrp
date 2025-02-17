@@ -1,4 +1,4 @@
-HotCRP Conference Review Software [![Build Status](https://github.com/kohler/hotcrp/actions/workflows/tests.yml/badge.svg)](https://github.com/kohler/hotcrp/actions/workflows/tests.yml)
+HotCRP Conference Review Software
 =================================
 
 HotCRP is awesome software for managing review processes, especially for
